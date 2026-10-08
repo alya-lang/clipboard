@@ -212,7 +212,7 @@ alya run examples/demo.alya
 ```
 
 > [!NOTE]
-> **Upstream compiler issue:** `alya run` on larger drivers can miscompile struct-value flows (see [alya-lang/alya#133](https://github.com/alya-lang/alya/issues/133) — untyped-receiver method calls emitting undefined `fn_<method>` symbols, plus driver-dependent wrong-code). `alya test` exercises the same operations deterministically and is the reliable verification gate until the fix lands.
+> **Upstream compiler issues:** struct values flowing through `map` slots can miscompile depending on overall program shape — untyped-receiver method calls emitting undefined `fn_<method>` symbols ([alya-lang/alya#133](https://github.com/alya-lang/alya/issues/133), fixed) and struct-field reads returning garbage/crashing under `alya run` ([alya-lang/alya#138](https://github.com/alya-lang/alya/issues/138), open). `alya test` exercises the same operations deterministically and is the reliable verification gate.
 
 Check code formatting:
 
