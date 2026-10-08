@@ -11,7 +11,7 @@ import "../types.alya"
 # Private Helpers
 # ───────────────────────────────────────────────────────────────
 
-# Returns 1 when `ch` is ASCII whitespace, 0 otherwise.
+# Returns true when `ch` is ASCII whitespace, false otherwise.
 function is_space_ch(ch) -> bool
     if ch == " " or ch == "\t" or ch == "\n" or ch == "\r"
         return true
@@ -33,7 +33,7 @@ end
 # Text Helpers
 # ───────────────────────────────────────────────────────────────
 
-## Returns 1 for null, empty, or whitespace-only text, 0 otherwise.
+## Returns true for null, empty, or whitespace-only text, false otherwise.
 pub function is_blank_text(text) -> bool
     if text is null
         return true
@@ -170,7 +170,7 @@ pub function html_to_text(html, fallback = null) -> string
     return html_strip(html)
 end
 
-## Returns 1 when `html` contains a matched `<...>` tag pair, 0 otherwise.
+## Returns true when `html` contains a matched `<...>` tag pair, false otherwise.
 pub function html_markup_valid(html) -> bool
     if html is null
         return false
@@ -300,7 +300,7 @@ pub function image_info(img: ClipboardImage) -> string
     return img.image_describe()
 end
 
-## Returns 1 when an untyped value holds a consistent image payload.
+## Returns true when an untyped value holds a consistent image payload.
 ##
 ## Field-based check for values of unknown static type (map lookups,
 ## untyped returns): struct methods cannot dispatch on `any`, so this
@@ -435,7 +435,7 @@ pub function files_normalize(paths) -> array
     return out
 end
 
-## Returns 1 when the list holds at least one non-blank path, 0 otherwise.
+## Returns true when the list holds at least one non-blank path, false otherwise.
 pub function files_list_valid(paths) -> bool
     if files_normalize(paths) is null
         return false
@@ -446,7 +446,7 @@ pub function files_list_valid(paths) -> bool
     return false
 end
 
-## Returns 1 when an untyped value holds a consistent audio payload.
+## Returns true when an untyped value holds a consistent audio payload.
 ##
 ## Field-based check for values of unknown static type (map lookups,
 ## untyped returns): struct methods cannot dispatch on `any`, so this
