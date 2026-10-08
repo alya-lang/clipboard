@@ -11,15 +11,16 @@ Cross-platform clipboard toolkit: text, HTML, image, file list, history, watcher
 
 ## 🌟 Features
 
-- ⚡ **Lightweight & High Performance**: Minimal memory overhead, zero runtime bloat, and fast native execution
-- 🧩 **Modular Architecture**: Layered multi-module design featuring a clean public facade (`src/lib.alya`), rich data models (`src/types.alya`), and encapsulated core formatters (`src/core/formatter.alya`)
-- 🔒 **Public/Private Visibility (`pub`)**: Fine-grained export control with `pub` for public functions, structs, and enums, keeping internal helper functions private and encapsulated
-- 🎭 **Structural Duck Typing & Interfaces**: Dynamic interface dispatch (`Summarizable`, `Describable`) without brittle inheritance hierarchies
-- 📦 **Rich Domain Models & Enums**: Idiomatic `enum` types (`ClipboardStatus`, `ClipboardPriority`, `ClipboardStyle`) and typed data containers (`ClipboardConfig`, `ClipboardResult`, `ClipboardStats`)
-- 🎯 **Advanced Pattern Matching**: Clean branching with `when` expressions, range matching, and condition guards
-- 🛡️ **Defensive Result Pattern**: Structured error handling and outcome encapsulation with `ok_result` and `error_result`
-- 🧪 **Enterprise Test & Benchmark Suite**: 100% test coverage with standard assertions (`std/test`) and micro-benchmarking (`std/test` bench runner)
-- 🚩 **Feature-Gated API Slices**: Optional capability slices via `[features]` in `alya.toml` (`default = ["extras"]`) and `@cfg(feature = "extras")` gating with a `@cfg(not(feature = "extras"))` fallback stub (see `src/core/extras.alya`)
+- 📋 **Multi-Format Payloads**: Unicode text, HTML with plain-text fallback, raw RGB/RGBA images, PCM audio, file path lists, and application-defined custom formats
+- 🖼️ **Image Pipeline**: Solid-fill synthesis, RGB grayscale conversion, nearest-neighbor thumbnails, and dimension/byte-length validation
+- 🔊 **Audio Pipeline**: Silence synthesis plus square/triangle-wave tone generators in pure integer arithmetic, with duration and frame introspection
+- 🕘 **History Log**: Retention-capped `ClipboardEntry` journal with indexed access, per-format search, and snapshot dump/restore round-trips
+- 👀 **Change Watcher**: Cooperative sequence polling with `fn(entry)` hooks — no threads, no blocking, headless-safe
+- 🖥️ **Native OS Bridge**: Best-effort Win32 clipboard backend (text) behind the `native` feature; macOS/Linux fall back to deterministic stubs so CI never needs a display server
+- 🧩 **Modular Architecture**: Clean public facade (`src/lib.alya`), rich data models (`src/types.alya`), and encapsulated engines (`src/core/store.alya`, `codec.alya`, `history.alya`, `watcher.alya`, `system.alya`, `formatter.alya`, `extras.alya`)
+- 🔒 **Public/Private Visibility (`pub`)**: Fine-grained export control keeping internal helpers encapsulated
+- 🚩 **Feature-Gated API Slices**: `native` (OS bridge) and `extras` (synthesis, batch copy, sync, snapshots) slices via `[features]` with descriptive fallback stubs
+- 🧪 **Enterprise Test & Benchmark Suite**: Deterministic in-memory tests plus micro-benchmarks for text, image, files, history, and stats paths
 
 ---
 
@@ -32,14 +33,24 @@ clipboard/
 ├── .gitignore              # Ecosystem standard ignore filters
 ├── .vscode/                # VS Code workspace settings, DAP launch configurations & tasks
 ├── alya.toml               # Package manifest with dependencies, [features] and optional [build]
-├── c/                      # (Optional) Native C sources for zero-dependency FFI packages
+├── c/                      # Native C sources for zero-dependency FFI packages
+│   ├── clipboard.c         # Portable fallback core (version, limits, arithmetic probe)
+│   ├── clipboard.h         # Shared native API declarations
+│   ├── win32_clipboard.c   # Windows backend (OpenClipboard, CF_UNICODETEXT, sequence)
+│   ├── cocoa_clipboard.c   # macOS stub backend (headless-safe no-op)
+│   └── linux_clipboard.c   # Linux stub backend (headless-safe no-op)
 ├── src/
 │   ├── lib.alya            # Public API facade (pub exports, re-exports & pipeline runners)
 │   ├── types.alya          # Data models, pub enums, pub structs, and struct methods
-│   ├── ffi.alya            # (Optional) Native extern "C" declarations
+│   ├── ffi.alya            # Native extern "C" declarations
 │   └── core/               # Subdirectory module hierarchy
-│       ├── formatter.alya  # Domain formatting routines, salutation builders & pattern matchers
-│       └── extras.alya     # Feature-gated (`extras`) optional API slice with `@cfg` gating
+│       ├── store.alya      # In-memory state engine (copy/paste/has/clear per format)
+│       ├── codec.alya      # Text/HTML/image/audio/file helpers and validators
+│       ├── history.alya    # History log queries and retention tuning
+│       ├── watcher.alya    # Sequence polling and change hooks
+│       ├── system.alya     # Native OS bridge (feature-gated `native`)
+│       ├── formatter.alya  # Human-readable renderers for entries, stats, payloads
+│       └── extras.alya     # Synthesis, batch copy, sync, snapshots (feature-gated `extras`)
 ├── examples/
 │   └── demo.alya           # Comprehensive runnable walkthrough of all package capabilities
 ├── tests/
@@ -77,18 +88,20 @@ alya install
 import "clipboard" as pkg
 
 function main()
-    # 1. Basic facade call with default parameter
-    let greeting = pkg::hello()
-    say f"Greeting:  {greeting}"
+    # 1. Text round-trip on an in-memory clipboard
+    let cb = pkg::new_clipboard()
+    cb.copy_text("hello clipboard")
+    say f"Text: {cb.paste_text()}"
 
-    # 2. Struct configuration with priority, style, and methods
-    let cfg = pkg::new_config("Community", 5, pkg::ClipboardPriority.High, pkg::ClipboardStyle.Formal)
-    say f"Summary:   {cfg.summary()}"
-    say f"Formatted: {pkg::core_format_custom(cfg)}"
+    # 2. Image payload with validation and methods
+    let img = pkg::blank_image(8, 8, 3, 200)
+    cb.copy_image(img)
+    say f"Image: {pkg::format_image(cb.paste_image())}"
 
-    # 3. Processing pipeline returning Result model
-    let res = pkg::process("Analytics", 3, pkg::ClipboardPriority.Critical)
-    say f"Outcome:   {res.message}"
+    # 3. Audio payload, history, and stats
+    cb.copy_audio(pkg::beep_audio(440, 100, 8000, 60))
+    say f"History: {cb.history_len()} entries, last: {cb.history_last().preview}"
+    say f"Stats:   {cb.stats().stats_summary()}"
 end
 
 main()
@@ -100,45 +113,68 @@ main()
 
 | Symbol | Visibility | Description |
 |---|---|---|
-| `hello(name = "World")` | `pub function` | Returns a formatted greeting string. Defaults to `"World"` if null or empty. |
-| `new_config(name, count, priority, style)` | `pub function` | Factory constructing a `ClipboardConfig` with sensible defaults. |
-| `make_config(name, count, priority, style, enabled, tags)` | `pub function` | Full constructor for `ClipboardConfig`. |
-| `process(label, count, priority)` | `pub function` | Runs processing pipeline, returning an `ok_result` `ClipboardResult`. |
-| `process_batch(labels)` | `pub function` | Formats an array of labels in batch, returning an array of strings. |
-| `ok_result(value, message)` | `pub function` | Constructs a successful `ClipboardResult` container (`status = 0`). |
-| `error_result(message, errors)` | `pub function` | Constructs a failed `ClipboardResult` container (`status = 1`). |
-| `make_stats(total, passed, failed, skipped)` | `pub function` | Constructs a `ClipboardStats` metrics record. |
-| `format_summary(cfg)` | `pub function` | Formats summary of a config instance (satisfies `Summarizable`). |
-| `format_description(cfg)` | `pub function` | Formats description of a config instance (satisfies `Describable`). |
-| `format_config(config)` | `pub function` | Multi-field formatter producing descriptive overview of a `ClipboardConfig`. |
-| `format_result(result)` | `pub function` | Formats a `ClipboardResult` into `[OK]` or `[ERROR]` status line. |
-| `format_stats(stats)` | `pub function` | Formats total checked items and success rate percentage. |
-| `clamp(n, min_val, max_val)` | `pub function` | Clamps an integer value to the closed range `[min_val, max_val]`. |
-| `pluralize(n, singular, plural)` | `pub function` | Pattern-matches count to return singular or plural noun form. |
-| `repeat_string(label, count)` | `pub function` | Repeats a string into an array of `count` items. |
-| `extra_greeting(name = "World")` | `pub function` (`extras` feature, default-on) | Enthusiastic greeting slice gated by `@cfg(feature = "extras")`; stub throws a descriptive error when the feature is off. |
-| `Summarizable` | `pub interface` | Structural contract requiring `summary(self) -> string`. |
-| `Describable` | `pub interface` | Structural contract requiring `describe(self) -> string` and `is_valid(self) -> int`. |
-| `ClipboardStatus` | `pub enum` | Lifecycle status codes (`Pending = 0`, `Active = 1`, `Archived = 2`, `Error = 3`). |
-| `ClipboardPriority` | `pub enum` | Priority tiers (`Low = 0`, `Normal = 1`, `High = 2`, `Critical = 3`). |
-| `ClipboardStyle` | `pub enum` | Presentation styles (`Standard = 0`, `Formal = 1`, `Casual = 2`). |
-| `ClipboardConfig` | `pub struct` | Primary configuration model (`name`, `count`, `priority`, `style`, `enabled`, `tags`). |
-| `ClipboardConfig.summary()` | `pub method` | Single-line formatted summary (satisfies `Summarizable`). |
-| `ClipboardConfig.describe()` | `pub method` | Detailed multi-field description (satisfies `Describable`). |
-| `ClipboardConfig.is_valid()` | `pub method` | Validation guard returning 1 if valid, 0 otherwise. |
-| `ClipboardConfig.is_enabled()` | `pub method` | Returns 1 if active, 0 if disabled. |
-| `ClipboardConfig.with_name(new_name)` | `pub method` | Immutable copy with updated name. |
-| `ClipboardConfig.with_priority(new_prio)` | `pub method` | Immutable copy with updated priority tier. |
-| `ClipboardResult` | `pub struct` | Operation outcome model (`value`, `status`, `message`, `errors`). |
-| `ClipboardResult.is_ok()` | `pub method` | Returns 1 if successful (`status == 0`), 0 otherwise. |
-| `ClipboardResult.is_error()` | `pub method` | Returns 1 if error (`status != 0`), 0 otherwise. |
-| `ClipboardResult.unwrap_or(fallback)` | `pub method` | Returns message on success, or fallback on error. |
-| `ClipboardStats` | `pub struct` | Run statistics model (`total`, `passed`, `failed`, `skipped`). |
-| `ClipboardStats.total_checked()` | `pub method` | Sum of passed and failed items count. |
-| `ClipboardStats.success_rate()` | `pub method` | Computed percentage string (e.g. `"95%"`). |
+| `new_clipboard(backend, max_history)` | `pub function` | Factory creating an empty `Clipboard` (`"memory"` backend, 32 history entries by default). |
+| `clipboard_from_config(cfg)` | `pub function` | Factory creating a `Clipboard` from a `ClipboardConfig` instance. |
+| `clipboard_config(backend, max_history, native_fallback)` | `pub function` | Factory constructing clipboard construction options. |
+| `native_add(a, b)` | `pub function` | Bundled C engine smoke test (`a + b` executed natively). |
+| `Clipboard.copy_text(text)` | `pub method` | Stores normalized text, replacing any previous text payload. |
+| `Clipboard.paste_text()` | `pub method` | Returns stored text, or null when absent. |
+| `Clipboard.has_text()` | `pub method` | Returns 1 for non-blank stored text, 0 otherwise. |
+| `Clipboard.copy_html(html, plain)` | `pub method` | Stores HTML markup with an optional plain-text alternative. |
+| `Clipboard.paste_html()` | `pub method` | Returns the stored `{ "html", "plain" }` payload map, or null. |
+| `Clipboard.paste_html_text()` | `pub method` | Returns the plain-text alternative of the stored HTML, or null. |
+| `Clipboard.has_html()` | `pub method` | Returns 1 when an HTML payload is present, 0 otherwise. |
+| `Clipboard.copy_image(img)` | `pub method` | Stores a `ClipboardImage`; returns 1 on success, 0 when invalid. |
+| `Clipboard.paste_image()` | `pub method` | Returns the stored `ClipboardImage`, or null when absent. |
+| `Clipboard.has_image()` | `pub method` | Returns 1 for a valid stored image, 0 otherwise. |
+| `Clipboard.copy_audio(aud)` | `pub method` | Stores a `ClipboardAudio`; returns 1 on success, 0 when invalid. |
+| `Clipboard.paste_audio()` | `pub method` | Returns the stored `ClipboardAudio`, or null when absent. |
+| `Clipboard.has_audio()` | `pub method` | Returns 1 for a valid stored audio payload, 0 otherwise. |
+| `Clipboard.copy_files(paths)` | `pub method` | Stores a normalized file path list; 0 when the list is empty. |
+| `Clipboard.paste_files()` | `pub method` | Returns the stored file path array, or null when absent. |
+| `Clipboard.has_files()` | `pub method` | Returns 1 for a non-empty stored file list, 0 otherwise. |
+| `Clipboard.set_custom(name, value, mime)` | `pub method` | Stores an application-defined payload under `custom:<name>`. |
+| `Clipboard.get_custom(name)` | `pub method` | Returns a custom payload by name, or null when absent. |
+| `Clipboard.has_custom(name)` | `pub method` | Returns 1 when the named custom payload exists, 0 otherwise. |
+| `Clipboard.clear_format(name)` | `pub method` | Clears one format slot; returns 1 when a payload was removed. |
+| `Clipboard.clear()` | `pub method` | Clears every format slot; returns the removed format count. |
+| `Clipboard.formats()` | `pub method` | Returns an independent copy of the present format-name list. |
+| `Clipboard.has(name)` | `pub method` | Returns 1 when the named format slot is present, 0 otherwise. |
+| `Clipboard.is_empty()` | `pub method` | Returns 1 when no payload is stored, 0 otherwise. |
+| `Clipboard.meta(name)` | `pub method` | Returns the `ClipboardEntry` metadata for a slot, or null. |
+| `Clipboard.stats()` | `pub method` | Builds a `ClipboardStats` snapshot of this container. |
+| `Clipboard.clipboard_summary()` | `pub method` | One-line container overview with backend, formats, and counters. |
+| `Clipboard.clipboard_describe()` | `pub method` | Detailed container description with the last mutation timestamp. |
+| `Clipboard.clipboard_valid()` | `pub method` | Returns 1 (a constructed clipboard is always usable). |
+| `Clipboard.history_len()` | `pub method` | Returns the retained history entry count. |
+| `Clipboard.history_last()` | `pub method` | Returns the most recent history entry, or null when empty. |
+| `Clipboard.history_get(index)` | `pub method` | Indexed history access (negative counts from the end). |
+| `Clipboard.history_by_format(format)` | `pub method` | Returns history entries filtered by format. |
+| `Clipboard.on_change(hook)` | `pub method` | Registers a `fn(entry)` change hook for watcher polls. |
+| `Clipboard.watch_poll()` | `pub method` | Polls once, firing the hook on change; 1 on change, 0 otherwise. |
+| `native_available()` | `pub function` (`native` feature, default-on) | Returns 1 when an OS clipboard backend answered, 0 for stubs. |
+| `system_copy_text(text)` | `pub function` (`native` feature, default-on) | Writes text to the OS clipboard (best-effort). |
+| `system_paste_text()` | `pub function` (`native` feature, default-on) | Reads text from the OS clipboard (`""` when unavailable). |
+| `auto_copy_text(cb, text)` | `pub function` (`native` feature, default-on) | Stores locally and mirrors to the OS clipboard when possible. |
+| `auto_paste_text(cb)` | `pub function` (`native` feature, default-on) | Prefers the OS clipboard, falls back to the memory copy. |
+| `gradient_image(w, h)` | `pub function` (`extras` feature, default-on) | Synthesizes a deterministic diagonal RGB gradient image. |
+| `tone_audio(freq, ms, rate)` | `pub function` (`extras` feature, default-on) | Synthesizes a triangle-wave tone in integer arithmetic. |
+| `batch_copy(cb, text, html, img, aud, paths)` | `pub function` (`extras` feature, default-on) | Atomically writes several formats at once; returns written count. |
+| `sync_from(dst, src)` | `pub function` (`extras` feature, default-on) | Mirrors every present format from `src` into `dst`. |
+| `snapshot_dump(cb)` | `pub function` (`extras` feature, default-on) | Serializes present payloads into a plain map snapshot. |
+| `snapshot_restore(cb, dump)` | `pub function` (`extras` feature, default-on) | Restores payloads from a snapshot map; returns restored count. |
+| `make_image(w, h, channels, data)` | `pub function` | Factory constructing a `ClipboardImage` payload struct. |
+| `make_audio(rate, channels, bits, data)` | `pub function` | Factory constructing a `ClipboardAudio` payload struct. |
+| `ClipboardFormat` | `pub enum` | Payload formats (`Text = 0`, `Html = 1`, `Image = 2`, `Audio = 3`, `Files = 4`, `Custom = 5`). |
+| `ClipboardBackend` | `pub enum` | Backend selectors (`Memory = 0`, `Native = 1`, `Auto = 2`). |
+| `ClipboardImage` | `pub struct` | Image payload (`width`, `height`, `channels`, `data`) with `image_valid`, `pixels`, `byte_len`, `image_summary`, `image_describe` methods. |
+| `ClipboardAudio` | `pub struct` | Audio payload (`sample_rate`, `channels`, `bits`, `data`) with `audio_valid`, `frames`, `duration_ms`, `audio_summary`, `audio_describe` methods. |
+| `ClipboardEntry` | `pub struct` | History record (`format`, `mime`, `seq`, `created_at`, `size`, `preview`) with `entry_valid`, `entry_summary`, `entry_describe` methods. |
+| `Clipboard` | `pub struct` | Stateful container (store/meta/formats/seq/counters/history/watcher) with format, history, and watcher methods. |
+| `ClipboardStats` | `pub struct` | Utilization snapshot (`writes`, `reads`, `clears`, `seq`, `formats`, `history_len`, `backend`) with `total_ops` and `stats_summary` methods. |
 
 > [!TIP]
-> **Internal Helpers & Documentation:** Public symbols are documented with `##` Markdown docstrings, enabling automatic API documentation generation via `alya doc`. Private functions such as `build_salutation` and `build_priority_label` in `src/core/formatter.alya` are not annotated with `pub` and remain encapsulated within their respective modules.
+> **Internal Helpers & Documentation:** Public symbols are documented with `##` Markdown docstrings, enabling automatic API documentation generation via `alya doc`. Private functions in `src/core/*.alya` are not annotated with `pub` and remain encapsulated within their respective modules.
 
 ---
 
@@ -150,10 +186,10 @@ Run the automated test suite using `alya test`:
 alya test
 ```
 
-Exercise feature selection (the `extras` slice is default-on):
+Exercise feature selection (both `extras` and `native` slices are default-on):
 
 ```bash
-alya test --features extras
+alya test --features extras,native
 alya test --no-default-features
 ```
 
@@ -174,6 +210,9 @@ Run the example demo:
 ```bash
 alya run examples/demo.alya
 ```
+
+> [!NOTE]
+> **Upstream compiler issue:** `alya run` on larger drivers can miscompile struct-value flows (see [alya-lang/alya#133](https://github.com/alya-lang/alya/issues/133) — untyped-receiver method calls emitting undefined `fn_<method>` symbols, plus driver-dependent wrong-code). `alya test` exercises the same operations deterministically and is the reliable verification gate until the fix lands.
 
 Check code formatting:
 

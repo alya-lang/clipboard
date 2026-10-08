@@ -1,28 +1,313 @@
-## clipboard Optional Extras Module (feature-gated)
+## clipboard Advanced Extras (feature-gated)
 ##
 ## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
-## Demonstrates feature-gated API slices: this module is only compiled when
-## the `extras` feature is active (see `[features]` in `alya.toml`). Gate
-## imports and items with `@cfg(feature = "...")` and keep a
-## `@cfg(not(feature = "..."))` fallback stub in `src/lib.alya` so callers
-## get a clear descriptive error instead of an undefined reference.
+## Optional capability slice behind the `extras` feature (default-on):
+## procedural image/audio synthesis, atomic multi-format writes, clipboard
+## sync, and snapshot dump/restore.
 
-## Returns an enthusiastic greeting for the specified recipient.
-##
-## Only available when the `extras` feature is active (default-on). Without
-## it, the fallback stub in `src/lib.alya` throws a descriptive error.
-##
-## ### Parameters
-## - `name`: The recipient name string. Defaults to `"World"`.
-##
-## ### Returns
-## The greeting string `"Howdy, {name}!"`.
-##
-## ### Examples
-## ```alya
-## let msg = extra_greeting("Alya") # "Howdy, Alya!"
-## ```
 @cfg(feature = "extras")
-pub function extra_greeting(name = "World") -> string
-    return "Howdy, {name}!"
+import "../types.alya"
+@cfg(feature = "extras")
+import "./codec.alya"
+@cfg(feature = "extras")
+import "./store.alya"
+@cfg(feature = "extras")
+import "./history.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Extras Backend (default-on `extras` feature)
+# ───────────────────────────────────────────────────────────────
+
+## Synthesizes a smooth diagonal RGB gradient image.
+##
+## Red grows left-to-right, green grows top-to-bottom, blue is the mean of
+## both — fully deterministic for a given size.
+@cfg(feature = "extras")
+pub function gradient_image(width: int = 16, height: int = 16) -> ClipboardImage
+    let w = width
+    if w <= 0
+        w = 16
+    end
+    let h = height
+    if h <= 0
+        h = 16
+    end
+    let data = []
+    let y = 0
+    while y < h
+        let g = 0
+        if h > 1
+            g = (y * 255) / (h - 1)
+        end
+        let x = 0
+        while x < w
+            let r = 0
+            if w > 1
+                r = (x * 255) / (w - 1)
+            end
+            data.push(r)
+            data.push(g)
+            data.push((r + g) / 2)
+            x += 1
+        end
+        y += 1
+    end
+    return make_image(w, h, 3, data)
 end
+
+## Synthesizes a triangle-wave tone (integer arithmetic, no float dependency).
+##
+## Rises and falls linearly within each period for a softer edge than the
+## square-wave `beep_audio` in `codec.alya`.
+@cfg(feature = "extras")
+pub function tone_audio(freq_hz: int = 440, duration_ms: int = 100, sample_rate: int = 8000) -> ClipboardAudio
+    let rate = sample_rate
+    if rate <= 0
+        rate = 8000
+    end
+    let freq = freq_hz
+    if freq <= 0
+        freq = 440
+    end
+    let ms = duration_ms
+    if ms < 0
+        ms = 0
+    end
+    let period = rate / freq
+    if period <= 0
+        period = 1
+    end
+    let frames = (ms * rate) / 1000
+    let data = []
+    let i = 0
+    while i < frames
+        let phase = i % period
+        let half = period / 2
+        let sample = 128
+        if half > 0
+            if phase < half
+                sample = 128 + (phase * 100) / half
+            else
+                sample = 228 - ((phase - half) * 100) / half
+            end
+        end
+        if sample < 0
+            sample = 0
+        elif sample > 255
+            sample = 255
+        end
+        data.push(sample)
+        i += 1
+    end
+    return make_audio(rate, 1, 8, data)
+end
+
+## Atomically writes text, HTML, image, audio, and file payloads at once.
+##
+## Null (or invalid image/audio, empty file list) arguments are skipped.
+## Returns the number of formats written.
+@cfg(feature = "extras")
+pub function batch_copy(cb: Clipboard, text = null, html = null, img = null, aud = null, paths = null) -> int
+    let n = 0
+    if text is not null
+        store_copy_text(cb, text)
+        n += 1
+    end
+    if html is not null
+        store_copy_html(cb, html)
+        n += 1
+    end
+    if img is not null and image_value_valid(img) == 1
+        store_copy_image(cb, img)
+        n += 1
+    end
+    if aud is not null and audio_value_valid(aud) == 1
+        store_copy_audio(cb, aud)
+        n += 1
+    end
+    if paths is not null and len(files_normalize(paths)) > 0
+        store_copy_files(cb, paths)
+        n += 1
+    end
+    return n
+end
+
+## Copies every present format from `src` into `dst`. Returns copied count.
+##
+## History entries are re-recorded on `dst` with fresh sequence numbers.
+@cfg(feature = "extras")
+pub function sync_from(dst: Clipboard, src: Clipboard) -> int
+    let n = 0
+    for name in src.formats
+        let slot = "" + name
+        when slot
+            is "text" then
+                store_copy_text(dst, store_paste_text(src))
+                n += 1
+            is "html" then
+                let payload = store_paste_html(src)
+                store_copy_html(dst, payload["html"], payload["plain"])
+                n += 1
+            is "image" then
+                if store_copy_image(dst, store_paste_image(src)) == 1
+                    n += 1
+                end
+            is "audio" then
+                if store_copy_audio(dst, store_paste_audio(src)) == 1
+                    n += 1
+                end
+            is "files" then
+                if store_copy_files(dst, store_paste_files(src)) == 1
+                    n += 1
+                end
+            else
+                if store_set_custom(dst, slot[7..], store_get_custom(src, slot[7..])) == 1
+                    n += 1
+                end
+        end
+    end
+    return n
+end
+
+## Serializes present payloads into a plain map snapshot.
+##
+## Binary payloads travel as structs inside the map (never stringified),
+## so `restore` round-trips them losslessly.
+@cfg(feature = "extras")
+pub function snapshot_dump(cb: Clipboard) -> map
+    let out = map()
+    for name in cb.formats
+        let slot = "" + name
+        when slot
+            is "text" then
+                out["text"] = store_paste_text(cb)
+            is "html" then
+                let hp = store_paste_html(cb)
+                out["html"] = hp["html"]
+                out["html_text"] = hp["plain"]
+            is "image" then
+                out["image"] = store_paste_image(cb)
+            is "audio" then
+                out["audio"] = store_paste_audio(cb)
+            is "files" then
+                out["files"] = ""
+                let fi = 0
+                while true
+                    let fslot = "files:" + str(fi)
+                    if fslot in cb.store
+                        out[fslot] = cb.store[fslot]
+                        fi += 1
+                    else
+                        break
+                    end
+                end
+            else
+                out[slot] = store_get_custom(cb, slot[7..])
+        end
+    end
+    return out
+end
+
+## Restores payloads from a `snapshot_dump` map. Returns restored count.
+@cfg(feature = "extras")
+pub function snapshot_restore(cb: Clipboard, dump: map) -> int
+    if dump is null
+        return 0
+    end
+    let n = 0
+    for key in keys(dump)
+        let slot = "" + key
+        when slot
+            is "text" then
+                store_copy_text(cb, dump[key])
+                n += 1
+            is "html" then
+                let alt = null
+                if "html_text" in dump
+                    alt = dump["html_text"]
+                end
+                store_copy_html(cb, dump[key], alt)
+                n += 1
+            is "image" then
+                if store_copy_image(cb, dump[key]) == 1
+                    n += 1
+                end
+            is "audio" then
+                if store_copy_audio(cb, dump[key]) == 1
+                    n += 1
+                end
+            is "files" then
+                let paths = []
+                let fi = 0
+                while true
+                    let fslot = "files:" + str(fi)
+                    if fslot in dump
+                        paths.push(dump[fslot])
+                        fi += 1
+                    else
+                        break
+                    end
+                end
+                if store_copy_files(cb, paths) == 1
+                    n += 1
+                end
+            else
+                if slot == "html_text"
+                    continue
+                end
+                if len(slot) > 6 and slot[..6] == "files:"
+                    continue
+                end
+                let cname = slot
+                if len(slot) > 7 and slot[..7] == "custom:"
+                    cname = slot[7..]
+                end
+                if store_set_custom(cb, cname, dump[key]) == 1
+                    n += 1
+                end
+        end
+    end
+    return n
+end
+
+# ───────────────────────────────────────────────────────────────
+# Fallback Stubs (`extras` feature disabled)
+# ───────────────────────────────────────────────────────────────
+
+# alya-lint: disable unused-param
+## Fallback stub for `gradient_image` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function gradient_image(width: int = 16, height: int = 16) -> ClipboardImage
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+
+## Fallback stub for `tone_audio` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function tone_audio(freq_hz: int = 440, duration_ms: int = 100, sample_rate: int = 8000) -> ClipboardAudio
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+
+## Fallback stub for `batch_copy` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function batch_copy(cb: Clipboard, text = null, html = null, img = null, aud = null, paths = null) -> int
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+
+## Fallback stub for `sync_from` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function sync_from(dst: Clipboard, src: Clipboard) -> int
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+
+## Fallback stub for `snapshot_dump` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function snapshot_dump(cb: Clipboard) -> map
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+
+## Fallback stub for `snapshot_restore` when `extras` is disabled.
+@cfg(not(feature = "extras"))
+pub function snapshot_restore(cb: Clipboard, dump: map) -> int
+    throw "extras feature is disabled (rebuild with default features or --features extras)"
+end
+# alya-lint: enable unused-param

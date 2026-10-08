@@ -1,0 +1,158 @@
+## clipboard Native OS Bridge (feature-gated)
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Best-effort OS clipboard access behind the `native` feature. When the
+## feature is off, deterministic stubs keep headless builds compiling and
+## the in-memory backend authoritative.
+
+@cfg(feature = "native")
+import "../ffi.alya"
+import "../types.alya"
+import "./store.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Native Backend (default-on `native` feature)
+# ───────────────────────────────────────────────────────────────
+
+## Returns 1 when an OS clipboard backend answered, 0 for the stub backend.
+@cfg(feature = "native")
+pub function native_available() -> int
+    return clipboard_native_available()
+end
+
+## Returns the OS clipboard sequence counter (0 on stub backends).
+@cfg(feature = "native")
+pub function native_seq() -> int
+    return clipboard_native_seq()
+end
+
+## Returns the native text-transfer ceiling in bytes (never below 1).
+@cfg(feature = "native")
+pub function native_text_limit() -> int
+    let cap = clipboard_text_limit()
+    if cap <= 0
+        return 65535
+    end
+    return cap
+end
+
+## Returns 1 when the OS clipboard currently holds text, 0 otherwise.
+@cfg(feature = "native")
+pub function system_has_text() -> int
+    return clipboard_sys_has_text()
+end
+
+## Reads text from the OS clipboard (`""` when empty or unavailable).
+@cfg(feature = "native")
+pub function system_paste_text() -> string
+    return clipboard_sys_get_text()
+end
+
+## Writes text to the OS clipboard. Returns 1 on success, 0 when unavailable.
+@cfg(feature = "native")
+pub function system_copy_text(text) -> int
+    if text is null
+        return 0
+    end
+    return clipboard_sys_set_text("" + text)
+end
+
+## Empties the OS clipboard. Returns 1 on success, 0 when unavailable.
+@cfg(feature = "native")
+pub function system_clear() -> int
+    return clipboard_sys_clear()
+end
+
+## Copies text to memory and mirrors it to the OS clipboard when possible.
+##
+## Always stores locally; the OS mirror is best-effort and never fails
+## the call. Returns 1.
+@cfg(feature = "native")
+pub function auto_copy_text(cb: Clipboard, text) -> int
+    store_copy_text(cb, text)
+    if cb.backend == "native" or cb.backend == "auto"
+        if clipboard_native_available() == 1
+            if text is not null
+                clipboard_sys_set_text("" + text)
+            end
+        end
+    end
+    return 1
+end
+
+## Pastes text, preferring the OS clipboard when the backend allows it.
+##
+## Falls back to the in-memory copy when the OS side is empty or missing.
+@cfg(feature = "native")
+pub function auto_paste_text(cb: Clipboard)
+    if cb.backend == "native" or cb.backend == "auto"
+        if clipboard_native_available() == 1 and clipboard_sys_has_text() == 1
+            let sys = clipboard_sys_get_text()
+            if sys != ""
+                return sys
+            end
+        end
+    end
+    return store_paste_text(cb)
+end
+
+# ───────────────────────────────────────────────────────────────
+# Fallback Stubs (`native` feature disabled)
+# ───────────────────────────────────────────────────────────────
+
+## Fallback stub reporting no OS backend when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function native_available() -> int
+    return 0
+end
+
+## Fallback stub sequence counter when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function native_seq() -> int
+    return 0
+end
+
+## Fallback stub transfer ceiling when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function native_text_limit() -> int
+    return 65535
+end
+
+## Fallback stub: always reports empty when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function system_has_text() -> int
+    return 0
+end
+
+## Fallback stub: always returns `""` when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function system_paste_text() -> string
+    return ""
+end
+
+## Fallback stub: memory-only copy count when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function system_copy_text(text) -> int
+    if text is null
+        return 0
+    end
+    return 0
+end
+
+## Fallback stub: reports failure when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function system_clear() -> int
+    return 0
+end
+
+## Fallback stub: stores locally only when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function auto_copy_text(cb: Clipboard, text) -> int
+    return store_copy_text(cb, text)
+end
+
+## Fallback stub: reads locally only when `native` is disabled.
+@cfg(not(feature = "native"))
+pub function auto_paste_text(cb: Clipboard)
+    return store_paste_text(cb)
+end

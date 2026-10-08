@@ -4,172 +4,244 @@
 import "std/test"
 import "../src/lib.alya" as pkg
 
+# Watcher hook probe recording fired entries.
+let seen_entries = []
+
+function watch_probe(entry)
+    seen_entries.push(entry)
+    return 1
+end
+
 function main()
     test_suite("clipboard Test Suite")
     let r = runner_new()
 
     # ═══════════════════════════════════════════════════════════
-    # 1. Facade Greeting & Sanitization
+    # 1. Native FFI Smoke Test & Enumerations
     # ═══════════════════════════════════════════════════════════
-    let res = pkg::hello("Alya")
-    runner_assert_str_eq(r, res, "Hello, Alya!", "pkg::hello returns formatted greeting")
+    runner_assert_eq(r, pkg::native_add(10, 32), 42, "pkg::native_add executes bundled C code")
+    runner_assert_eq(r, pkg::native_text_limit() > 0, 1, "native text limit is positive")
 
-    let default_res = pkg::hello()
-    runner_assert_str_eq(r, default_res, "Hello, World!", "pkg::hello() defaults to World")
+    runner_assert_eq(r, pkg::ClipboardFormat.Text, 0, "ClipboardFormat.Text == 0")
+    runner_assert_eq(r, pkg::ClipboardFormat.Html, 1, "ClipboardFormat.Html == 1")
+    runner_assert_eq(r, pkg::ClipboardFormat.Image, 2, "ClipboardFormat.Image == 2")
+    runner_assert_eq(r, pkg::ClipboardFormat.Audio, 3, "ClipboardFormat.Audio == 3")
+    runner_assert_eq(r, pkg::ClipboardFormat.Files, 4, "ClipboardFormat.Files == 4")
+    runner_assert_eq(r, pkg::ClipboardFormat.Custom, 5, "ClipboardFormat.Custom == 5")
 
-    let null_res = pkg::hello(null)
-    runner_assert_str_eq(r, null_res, "Hello, World!", "pkg::hello(null) sanitizes null to World")
-
-    let empty_res = pkg::hello("")
-    runner_assert_str_eq(r, empty_res, "Hello, World!", "pkg::hello(\"\") sanitizes empty string to World")
-
-    # ═══════════════════════════════════════════════════════════
-    # 2. Enumeration Values
-    # ═══════════════════════════════════════════════════════════
-    runner_assert_eq(r, pkg::ClipboardStatus.Pending, 0, "ClipboardStatus.Pending == 0")
-    runner_assert_eq(r, pkg::ClipboardStatus.Active, 1, "ClipboardStatus.Active == 1")
-    runner_assert_eq(r, pkg::ClipboardStatus.Archived, 2, "ClipboardStatus.Archived == 2")
-    runner_assert_eq(r, pkg::ClipboardStatus.Error, 3, "ClipboardStatus.Error == 3")
-
-    runner_assert_eq(r, pkg::ClipboardPriority.Low, 0, "ClipboardPriority.Low == 0")
-    runner_assert_eq(r, pkg::ClipboardPriority.Normal, 1, "ClipboardPriority.Normal == 1")
-    runner_assert_eq(r, pkg::ClipboardPriority.High, 2, "ClipboardPriority.High == 2")
-    runner_assert_eq(r, pkg::ClipboardPriority.Critical, 3, "ClipboardPriority.Critical == 3")
-
-    runner_assert_eq(r, pkg::ClipboardStyle.Standard, 0, "ClipboardStyle.Standard == 0")
-    runner_assert_eq(r, pkg::ClipboardStyle.Formal, 1, "ClipboardStyle.Formal == 1")
-    runner_assert_eq(r, pkg::ClipboardStyle.Casual, 2, "ClipboardStyle.Casual == 2")
+    runner_assert_eq(r, pkg::ClipboardBackend.Memory, 0, "ClipboardBackend.Memory == 0")
+    runner_assert_eq(r, pkg::ClipboardBackend.Native, 1, "ClipboardBackend.Native == 1")
+    runner_assert_eq(r, pkg::ClipboardBackend.Auto, 2, "ClipboardBackend.Auto == 2")
 
     # ═══════════════════════════════════════════════════════════
-    # 3. Struct Models & Factory Constructors
+    # 2. Text Payloads & Codec Helpers
     # ═══════════════════════════════════════════════════════════
-    let cfg = pkg::new_config("Community", 5, pkg::ClipboardPriority.High, pkg::ClipboardStyle.Formal)
-    runner_assert_str_eq(r, cfg.name, "Community", "cfg.name is initialized correctly")
-    runner_assert_eq(r, cfg.count, 5, "cfg.count is initialized correctly")
-    runner_assert_eq(r, cfg.priority, 2, "cfg.priority is initialized to High (2)")
-    runner_assert_eq(r, cfg.style, 1, "cfg.style is initialized to Formal (1)")
-    runner_assert_eq(r, cfg.enabled, 1, "cfg.enabled defaults to 1")
+    let cb = pkg::new_clipboard()
+    runner_assert_eq(r, cb.is_empty(), 1, "fresh clipboard is empty")
+    runner_assert_eq(r, cb.copy_text("hello clipboard"), 1, "copy_text returns 1")
+    runner_assert_str_eq(r, cb.paste_text(), "hello clipboard", "paste_text round-trips")
+    runner_assert_eq(r, cb.has_text(), 1, "has_text reports stored text")
+    runner_assert_eq(r, cb.has("text"), 1, "has finds the text slot")
 
-    let full_cfg = pkg::make_config("Full", 10, pkg::ClipboardPriority.Critical, pkg::ClipboardStyle.Casual, 0, ["tag1", "tag2"])
-    runner_assert_str_eq(r, full_cfg.name, "Full", "full_cfg.name is correct")
-    runner_assert_eq(r, full_cfg.count, 10, "full_cfg.count is correct")
-    runner_assert_eq(r, full_cfg.priority, 3, "full_cfg.priority is Critical (3)")
-    runner_assert_eq(r, full_cfg.enabled, 0, "full_cfg.enabled is 0")
-    runner_assert_eq(r, len(full_cfg.tags), 2, "full_cfg.tags has 2 elements")
-
-    # ═══════════════════════════════════════════════════════════
-    # 4. Struct Methods & Immutability
-    # ═══════════════════════════════════════════════════════════
-    let summ = cfg.summary()
-    runner_assert_str_eq(r, summ, "Community (count: 5, active)", "cfg.summary() returns expected formatted summary")
-
-    let desc = cfg.describe()
-    runner_assert_true(r, len(desc) > 0, "cfg.describe() returns non-empty description")
-
-    runner_assert_eq(r, cfg.is_valid(), true, "cfg.is_valid() returns 1 for valid configuration")
-    runner_assert_eq(r, cfg.is_enabled(), 1, "cfg.is_enabled() returns 1")
-
-    let updated_name_cfg = cfg.with_name("Contributors")
-    runner_assert_str_eq(r, updated_name_cfg.name, "Contributors", "with_name updates name")
-    runner_assert_str_eq(r, cfg.name, "Community", "original cfg.name remains immutable")
-
-    let updated_prio_cfg = cfg.with_priority(pkg::ClipboardPriority.Critical)
-    runner_assert_eq(r, updated_prio_cfg.priority, 3, "with_priority updates priority")
-    runner_assert_eq(r, cfg.priority, 2, "original cfg.priority remains unchanged")
+    cb.copy_text("a\r\nb\rc")
+    runner_assert_str_eq(r, cb.paste_text(), "a\nb\nc", "line endings normalize to LF")
+    runner_assert_eq(r, pkg::text_line_count("a\nb\nc"), 3, "line count counts separators")
+    runner_assert_eq(r, pkg::is_blank_text("   "), 1, "blank text detected")
+    runner_assert_eq(r, pkg::is_blank_text(" x "), 0, "non-blank text detected")
+    runner_assert_str_eq(r, pkg::text_preview("abcdef", 3), "abc...", "preview truncates with ellipsis")
 
     # ═══════════════════════════════════════════════════════════
-    # 5. Result Container & Methods
+    # 3. HTML Payloads
     # ═══════════════════════════════════════════════════════════
-    let ok_res = pkg::ok_result(42, "Computed successfully")
-    runner_assert_eq(r, ok_res.is_ok(), true, "ok_res.is_ok() == 1")
-    runner_assert_eq(r, ok_res.is_error(), false, "ok_res.is_error() == 0")
-    runner_assert_str_eq(r, ok_res.unwrap_or("fallback"), "Computed successfully", "ok_res unwrap_or returns message")
+    runner_assert_eq(r, cb.copy_html("<b>Hi</b>", "Hi"), 1, "copy_html returns 1")
+    let payload = cb.paste_html()
+    runner_assert_str_eq(r, payload["html"], "<b>Hi</b>", "html markup round-trips")
+    runner_assert_str_eq(r, payload["plain"], "Hi", "plain alternative round-trips")
+    runner_assert_str_eq(r, cb.paste_html_text(), "Hi", "paste_html_text returns alternative")
+    runner_assert_eq(r, cb.has_html(), 1, "has_html reports stored markup")
 
-    let err_res = pkg::error_result("Failed operation", ["Invalid input", "Timeout"])
-    runner_assert_eq(r, err_res.is_ok(), false, "err_res.is_ok() == 0")
-    runner_assert_eq(r, err_res.is_error(), true, "err_res.is_error() == 1")
-    runner_assert_str_eq(r, err_res.unwrap_or("fallback"), "fallback", "err_res unwrap_or returns fallback")
-    runner_assert_eq(r, len(err_res.errors), 2, "err_res contains 2 error details")
-
-    # ═══════════════════════════════════════════════════════════
-    # 6. Statistics Container & Methods
-    # ═══════════════════════════════════════════════════════════
-    let stats = pkg::make_stats(20, 18, 2, 0)
-    runner_assert_eq(r, stats.total, 20, "stats.total == 20")
-    runner_assert_eq(r, stats.passed, 18, "stats.passed == 18")
-    runner_assert_eq(r, stats.failed, 2, "stats.failed == 2")
-    runner_assert_eq(r, stats.total_checked(), 20, "stats.total_checked() == 20")
-    runner_assert_str_eq(r, stats.success_rate(), "90%", "stats.success_rate() == 90%")
+    runner_assert_eq(r, cb.copy_html("<p>Hey</p>"), 1, "copy_html without plain returns 1")
+    runner_assert_str_eq(r, cb.paste_html_text(), " Hey ", "plain falls back to stripped markup")
+    runner_assert_str_eq(r, pkg::html_escape("<a>&"), "&lt;a&gt;&amp;", "html_escape escapes markup")
+    runner_assert_str_eq(r, pkg::html_strip("<b>x</b>"), " x ", "html_strip removes tags")
+    runner_assert_eq(r, pkg::html_markup_valid("<b>x</b>"), 1, "html_valid accepts tags")
+    runner_assert_eq(r, pkg::html_markup_valid("plain"), 0, "html_valid rejects plain text")
 
     # ═══════════════════════════════════════════════════════════
-    # 7. Duck Typing Polymorphism (Interfaces)
+    # 4. Image Payloads
     # ═══════════════════════════════════════════════════════════
-    let is_summ = cfg is pkg::Summarizable
-    runner_assert_true(r, is_summ, "cfg satisfies Summarizable interface implicitly")
-    let iface_summ = pkg::format_summary(cfg)
-    runner_assert_str_eq(r, iface_summ, "Community (count: 5, active)", "format_summary dispatches via Summarizable")
+    let img = pkg::blank_image(4, 2, 3, 7)
+    runner_assert_eq(r, img.image_valid(), 1, "blank_image is valid")
+    runner_assert_eq(r, img.pixels(), 8, "pixels reports width * height")
+    runner_assert_eq(r, cb.copy_image(img), 1, "copy_image returns 1")
+    runner_assert_eq(r, cb.has_image(), 1, "has_image reports stored image")
+    let back_img = cb.paste_image()
+    runner_assert_eq(r, back_img.width, 4, "image width round-trips")
+    runner_assert_eq(r, len(back_img.data), 24, "image bytes round-trip")
 
-    let is_desc = cfg is pkg::Describable
-    runner_assert_true(r, is_desc, "cfg satisfies Describable interface implicitly")
-    let iface_desc = pkg::format_description(cfg)
-    runner_assert_true(r, len(iface_desc) > 0, "format_description dispatches via Describable")
+    let gray = pkg::image_grayscale(img)
+    runner_assert_eq(r, gray.image_valid(), 1, "grayscale output is valid")
+    runner_assert_eq(r, gray.data[0], gray.data[1], "grayscale channels match")
+    let thumb = pkg::image_thumbnail(pkg::blank_image(64, 32, 3, 9), 16)
+    runner_assert_eq(r, thumb.width, 16, "thumbnail fits max side")
+    runner_assert_eq(r, thumb.height, 8, "thumbnail keeps aspect ratio")
 
-    # Struct that does not implement Summarizable
-    let is_stats_summ = stats is pkg::Summarizable
-    runner_assert_false(r, is_stats_summ, "stats does not satisfy Summarizable interface")
-
-    # ═══════════════════════════════════════════════════════════
-    # 8. Workflow Processing & Batching
-    # ═══════════════════════════════════════════════════════════
-    let proc_res = pkg::process("Alice", 3, pkg::ClipboardPriority.High)
-    runner_assert_eq(r, proc_res.is_ok(), 1, "pkg::process returns successful result")
-    runner_assert_str_eq(r, proc_res.message, "OK", "pkg::process message is OK")
-
-    let batch_in = ["Alpha", "Beta", "Gamma"]
-    let batch_out = pkg::process_batch(batch_in)
-    runner_assert_eq(r, len(batch_out), 3, "process_batch returns 3 formatted records")
-
-    let null_batch = pkg::process_batch(null)
-    runner_assert_eq(r, len(null_batch), 0, "process_batch(null) returns empty array")
+    let bad_img = pkg::make_image(2, 2, 3, [1, 2, 3])
+    runner_assert_eq(r, bad_img.image_valid(), 0, "short byte array is invalid")
+    runner_assert_eq(r, cb.copy_image(bad_img), 0, "copy_image rejects invalid payload")
 
     # ═══════════════════════════════════════════════════════════
-    # 9. Control Flow & Pattern Matching Utilities
+    # 5. Audio Payloads (Ses)
     # ═══════════════════════════════════════════════════════════
-    runner_assert_eq(r, pkg::clamp(50, 0, 100), 50, "clamp within bounds")
-    runner_assert_eq(r, pkg::clamp(-10, 0, 100), 0, "clamp lower bound")
-    runner_assert_eq(r, pkg::clamp(150, 0, 100), 100, "clamp upper bound")
+    let tone = pkg::silent_audio(100, 8000, 1, 8)
+    runner_assert_eq(r, tone.audio_valid(), 1, "silent_audio is valid")
+    runner_assert_eq(r, tone.duration_ms(), 100, "silent duration matches request")
+    runner_assert_eq(r, cb.copy_audio(tone), 1, "copy_audio returns 1")
+    runner_assert_eq(r, cb.has_audio(), 1, "has_audio reports stored audio")
+    let back_aud = cb.paste_audio()
+    runner_assert_eq(r, back_aud.sample_rate, 8000, "sample rate round-trips")
+    runner_assert_eq(r, pkg::audio_frame_count(back_aud), 800, "frame count matches 100ms at 8kHz")
 
-    runner_assert_str_eq(r, pkg::pluralize(1, "record", "records"), "record", "pluralize 1 gives singular")
-    runner_assert_str_eq(r, pkg::pluralize(0, "record", "records"), "records", "pluralize 0 gives plural")
-    runner_assert_str_eq(r, pkg::pluralize(5, "record", "records"), "records", "pluralize 5 gives plural")
+    let beep = pkg::beep_audio(440, 50, 8000, 60)
+    runner_assert_eq(r, beep.audio_valid(), 1, "beep_audio is valid")
+    runner_assert_eq(r, beep.duration_ms(), 50, "beep duration matches request")
 
-    let repeated = pkg::repeat_string("item", 3)
-    runner_assert_eq(r, len(repeated), 3, "repeat_string produces 3 elements")
-    runner_assert_str_eq(r, repeated[0], "item", "repeated element matches input")
-
-    # ═══════════════════════════════════════════════════════════
-    # 10. Destructuring: Tuples & Maps
-    # ═══════════════════════════════════════════════════════════
-    let (t_prefix, t_count) = ("Custom", 42)
-    runner_assert_str_eq(r, t_prefix, "Custom", "tuple destructuring binds string")
-    runner_assert_eq(r, t_count, 42, "tuple destructuring binds integer")
-
-    let pkg_info = { "name": "clipboard", "version": "0.1.0" }
-    let { name: info_name, version: info_ver } = pkg_info
-    runner_assert_str_eq(r, info_name, "clipboard", "map destructuring extracts key name")
-    runner_assert_str_eq(r, info_ver, "0.1.0", "map destructuring extracts key version")
+    let bad_aud = pkg::make_audio(8000, 1, 16, [1, 2, 3])
+    runner_assert_eq(r, bad_aud.audio_valid(), 0, "odd 16-bit array is invalid")
+    runner_assert_eq(r, cb.copy_audio(bad_aud), 0, "copy_audio rejects invalid payload")
 
     # ═══════════════════════════════════════════════════════════
-    # 11. Feature-Gated API (`extras`, default-on)
+    # 6. File Lists & Custom Formats
     # ═══════════════════════════════════════════════════════════
+    runner_assert_eq(r, cb.copy_files(["/tmp/a.txt", "", "/tmp/b.txt", "/tmp/a.txt", null]), 1, "copy_files returns 1")
+    let files = cb.paste_files()
+    runner_assert_eq(r, len(files), 2, "files normalize blanks and duplicates")
+    runner_assert_str_eq(r, files[0], "/tmp/a.txt", "first path preserved")
+    runner_assert_str_eq(r, files[1], "/tmp/b.txt", "second path preserved")
+    runner_assert_eq(r, cb.has_files(), 1, "has_files reports stored list")
+    runner_assert_eq(r, cb.copy_files([]), 0, "copy_files rejects empty list")
+
+    runner_assert_eq(r, cb.copy_files(["/tmp/solo.txt"]), 1, "shorter rewrite returns 1")
+    let solo = cb.paste_files()
+    runner_assert_eq(r, len(solo), 1, "shorter rewrite drops stale entries")
+    runner_assert_str_eq(r, solo[0], "/tmp/solo.txt", "rewritten path preserved")
+
+    runner_assert_eq(r, cb.set_custom("theme", "dark", "text/plain"), 1, "set_custom returns 1")
+    runner_assert_str_eq(r, cb.get_custom("theme"), "dark", "custom payload round-trips")
+    runner_assert_eq(r, cb.has_custom("theme"), 1, "has_custom reports stored name")
+    runner_assert_eq(r, cb.set_custom("", "x"), 0, "set_custom rejects blank names")
+
+    let fmt_names = cb.formats()
+    let leaked = 0
+    for f in fmt_names
+        if f == "html_text" or f == "files:0"
+            leaked = 1
+        end
+    end
+    runner_assert_eq(r, leaked, 0, "internal html/file slots stay hidden")
+
+    # ═══════════════════════════════════════════════════════════
+    # 7. Formats, Metadata, Stats & Clearing
+    # ═══════════════════════════════════════════════════════════
+    let names = cb.formats()
+    runner_assert_eq(r, len(names) > 0, 1, "formats list is non-empty")
+    runner_assert_eq(r, cb.has("image"), 1, "has finds the image slot")
+    let meta = cb.meta("text")
+    runner_assert_eq(r, meta.format, pkg::ClipboardFormat.Text, "metadata entry carries the text format")
+    runner_assert_str_eq(r, meta.mime, "text/plain", "text metadata carries MIME label")
+
+    let stats = cb.stats()
+    runner_assert_eq(r, stats.writes > 0, 1, "stats count writes")
+    runner_assert_eq(r, stats.reads > 0, 1, "stats count reads")
+    runner_assert_eq(r, stats.seq > 0, 1, "stats expose sequence")
+    runner_assert_str_eq(r, stats.stats_summary()[..11], "[Clipboard]", "stats summary has prefix")
+
+    runner_assert_eq(r, cb.clear_format("text"), 1, "clear_format removes the slot")
+    runner_assert_eq(r, cb.has_text(), 0, "cleared text is gone")
+    let dropped = cb.clear()
+    runner_assert_eq(r, dropped > 0, 1, "clear removes remaining formats")
+    runner_assert_eq(r, cb.is_empty(), 1, "clipboard is empty after clear")
+
+    # ═══════════════════════════════════════════════════════════
+    # 8. History Log
+    # ═══════════════════════════════════════════════════════════
+    let hb = pkg::new_clipboard("memory", 3)
+    hb.copy_text("one")
+    hb.copy_text("two")
+    hb.copy_text("three")
+    hb.copy_text("four")
+    runner_assert_eq(r, hb.history_len(), 3, "history honors the retention cap")
+    runner_assert_str_eq(r, hb.history_last().preview, "four", "last entry is the newest write")
+    runner_assert_str_eq(r, hb.history_get(0).preview, "two", "oldest retained entry is correct")
+    runner_assert_str_eq(r, hb.history_get(-1).preview, "four", "negative index counts from the end")
+    runner_assert_eq(r, len(hb.history_by_format("text")), 3, "history filters by format")
+    runner_assert_eq(r, hb.history_clear(), 3, "history_clear drops retained entries")
+    runner_assert_eq(r, hb.history_len(), 0, "history is empty after clear")
+
+    # ═══════════════════════════════════════════════════════════
+    # 9. Change Watcher
+    # ═══════════════════════════════════════════════════════════
+    let wb = pkg::new_clipboard()
+    wb.on_change(watch_probe)
+    runner_assert_eq(r, wb.watch_changed(), 0, "no change before any write")
+    wb.copy_text("watched")
+    runner_assert_eq(r, wb.watch_changed(), 1, "write is observed without polling")
+    runner_assert_eq(r, wb.watch_poll(), 1, "poll reports the change")
+    runner_assert_eq(r, len(seen_entries), 1, "hook fired exactly once")
+    runner_assert_str_eq(r, seen_entries[0].preview, "watched", "hook received the latest entry")
+    runner_assert_eq(r, wb.watch_poll(), 0, "second poll is quiet")
+    wb.watch_stop()
+    wb.copy_text("unwatched")
+    runner_assert_eq(r, wb.watch_poll(), 1, "poll marker still advances after stop")
+    runner_assert_eq(r, len(seen_entries), 1, "stopped watcher fires no hook")
+
+    # ═══════════════════════════════════════════════════════════
+    # 10. Native Bridge (best-effort, headless-safe)
+    # ═══════════════════════════════════════════════════════════
+    let avail = pkg::native_available()
+    runner_assert_eq(r, avail == 0 or avail == 1, 1, "native_available reports 0 or 1")
+    runner_assert_eq(r, pkg::system_copy_text(null), 0, "system_copy_text rejects null")
+    let probe = pkg::new_clipboard("auto")
+    runner_assert_eq(r, pkg::auto_copy_text(probe, "auto-mirror"), 1, "auto_copy_text always stores locally")
+    runner_assert_str_eq(r, pkg::auto_paste_text(probe), "auto-mirror", "auto_paste_text falls back to memory")
+
+    # ═══════════════════════════════════════════════════════════
+    # 11. Overview Methods, Functional Wrappers & Extras
+    # ═══════════════════════════════════════════════════════════
+    runner_assert_eq(r, len(cb.clipboard_summary()) > 0, 1, "summary renders non-empty overview")
+    runner_assert_eq(r, cb.clipboard_valid(), 1, "clipboard reports valid")
+    runner_assert_eq(r, len(cb.clipboard_describe()) > 0, 1, "describe renders details")
+
+    let fb = pkg::new_clipboard()
+    runner_assert_eq(r, pkg::clipboard_copy_text(fb, "fn-style"), 1, "functional copy_text works")
+    runner_assert_str_eq(r, pkg::clipboard_paste_text(fb), "fn-style", "functional paste_text works")
+    runner_assert_eq(r, len(pkg::clipboard_formats(fb)) > 0, 1, "functional formats works")
+    runner_assert_eq(r, pkg::clipboard_stats(fb).writes > 0, 1, "functional stats works")
+
     @cfg(feature = "extras")
-    let extra_res = pkg::extra_greeting("Alya")
+    let grad = pkg::gradient_image(8, 8)
     @cfg(feature = "extras")
-    runner_assert_str_eq(r, extra_res, "Howdy, Alya!", "pkg::extra_greeting returns extras greeting")
-
-    # 12. Native C FFI verification
-    let c_sum = pkg::c_add(10, 32)
-    runner_assert_eq(r, c_sum, 42, "pkg::c_add executes bundled C code")
+    runner_assert_eq(r, grad.image_valid(), 1, "gradient_image is valid")
+    @cfg(feature = "extras")
+    let eb = pkg::new_clipboard()
+    @cfg(feature = "extras")
+    runner_assert_eq(r, pkg::batch_copy(eb, "t", "<p>t</p>", grad, null, ["/tmp/x"]), 4, "batch_copy writes four formats")
+    @cfg(feature = "extras")
+    let target = pkg::new_clipboard()
+    @cfg(feature = "extras")
+    runner_assert_eq(r, pkg::sync_from(target, eb) >= 4, 1, "sync_from mirrors formats")
+    @cfg(feature = "extras")
+    runner_assert_str_eq(r, target.paste_text(), "t", "synced text round-trips")
+    @cfg(feature = "extras")
+    let dump = pkg::snapshot_dump(eb)
+    @cfg(feature = "extras")
+    let restored = pkg::new_clipboard()
+    @cfg(feature = "extras")
+    runner_assert_eq(r, pkg::snapshot_restore(restored, dump) >= 4, 1, "snapshot round-trips formats")
+    @cfg(feature = "extras")
+    runner_assert_str_eq(r, restored.paste_text(), "t", "restored text round-trips")
+    @cfg(feature = "extras")
+    runner_assert_str_eq(r, restored.paste_html_text(), " t ", "restored html plain round-trips")
 
     let failed = runner_summary(r)
     if failed > 0

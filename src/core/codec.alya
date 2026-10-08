@@ -1,0 +1,498 @@
+## clipboard Text/HTML/Image/Audio/File Codecs & Validators
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Pure-Alya payload helpers with no OS dependencies: previews, HTML
+## escaping/stripping, image synthesis and conversion, PCM audio synthesis,
+## and file-list normalization.
+
+import "../types.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Private Helpers
+# ───────────────────────────────────────────────────────────────
+
+# Returns 1 when `ch` is ASCII whitespace, 0 otherwise.
+function is_space_ch(ch) -> int
+    if ch == " " or ch == "\t" or ch == "\n" or ch == "\r"
+        return 1
+    end
+    return 0
+end
+
+# Clamps `v` into the byte range [0, 255].
+function clamp_byte(v: int) -> int
+    if v < 0
+        return 0
+    elif v > 255
+        return 255
+    end
+    return v
+end
+
+# ───────────────────────────────────────────────────────────────
+# Text Helpers
+# ───────────────────────────────────────────────────────────────
+
+## Returns 1 for null, empty, or whitespace-only text, 0 otherwise.
+pub function is_blank_text(text) -> int
+    if text is null
+        return 1
+    end
+    let s = "" + text
+    if len(s) == 0
+        return 1
+    end
+    let i = 0
+    while i < len(s)
+        if is_space_ch(s[i]) == 0
+            return 0
+        end
+        i += 1
+    end
+    return 1
+end
+
+## Returns a truncated preview (`max_len` chars + `"..."` when cut).
+pub function text_preview(text, max_len: int = 48) -> string
+    if text is null
+        return ""
+    end
+    let s = "" + text
+    if max_len <= 0
+        return ""
+    end
+    if len(s) <= max_len
+        return s
+    end
+    return s[..max_len] + "..."
+end
+
+## Normalizes line endings (`\r\n` and `\r` become `\n`).
+pub function normalize_text(text) -> string
+    if text is null
+        return ""
+    end
+    let s = "" + text
+    let out = ""
+    let i = 0
+    while i < len(s)
+        let ch = s[i]
+        if ch == "\r"
+            out += "\n"
+            if i + 1 < len(s) and s[i + 1] == "\n"
+                i += 1
+            end
+        else
+            out += ch
+        end
+        i += 1
+    end
+    return out
+end
+
+## Counts logical lines (`\n` separators + 1 for non-empty text).
+pub function text_line_count(text) -> int
+    if text is null
+        return 0
+    end
+    let s = normalize_text(text)
+    if len(s) == 0
+        return 0
+    end
+    return len(split(s, "\n"))
+end
+
+# ───────────────────────────────────────────────────────────────
+# HTML Helpers
+# ───────────────────────────────────────────────────────────────
+
+## Escapes `&<>"` for safe embedding inside HTML markup.
+pub function html_escape(text) -> string
+    if text is null
+        return ""
+    end
+    let s = "" + text
+    let out = ""
+    let i = 0
+    while i < len(s)
+        let ch = s[i]
+        when ch
+            is "&" then
+                out += "&amp;"
+            is "<" then
+                out += "&lt;"
+            is ">" then
+                out += "&gt;"
+            is "\"" then
+                out += "&quot;"
+            else
+                out += ch
+        end
+        i += 1
+    end
+    return out
+end
+
+## Strips `<...>` tags, returning visible text with collapsed whitespace.
+pub function html_strip(html) -> string
+    if html is null
+        return ""
+    end
+    let s = "" + html
+    let out = ""
+    let in_tag = 0
+    let i = 0
+    while i < len(s)
+        let ch = s[i]
+        if in_tag == 1
+            if ch == ">"
+                in_tag = 0
+            end
+        elif ch == "<"
+            in_tag = 1
+            out += " "
+        else
+            out += ch
+        end
+        i += 1
+    end
+    return out
+end
+
+## Converts HTML to plain text, preferring an explicit fallback when given.
+##
+## Pass a stored plain-text alternative as `fallback`; otherwise tags are
+## stripped from `html`. Returns `""` for null input.
+pub function html_to_text(html, fallback = null) -> string
+    if fallback is not null and is_blank_text(fallback) == 0
+        return "" + fallback
+    end
+    return html_strip(html)
+end
+
+## Returns 1 when `html` contains a matched `<...>` tag pair, 0 otherwise.
+pub function html_markup_valid(html) -> int
+    if html is null
+        return 0
+    end
+    let s = "" + html
+    let open_at = -1
+    let i = 0
+    while i < len(s)
+        if s[i] == "<"
+            open_at = i
+        elif s[i] == ">" and open_at >= 0
+            if i - open_at >= 2
+                return 1
+            end
+            open_at = -1
+        end
+        i += 1
+    end
+    return 0
+end
+
+# ───────────────────────────────────────────────────────────────
+# Image Helpers
+# ───────────────────────────────────────────────────────────────
+
+## Creates a solid-fill image (`fill` clamped to `0-255`).
+pub function blank_image(width: int, height: int, channels: int = 3, fill: int = 0) -> ClipboardImage
+    let ch = channels
+    if ch != 3 and ch != 4
+        ch = 3
+    end
+    let w = width
+    if w <= 0
+        w = 1
+    end
+    let h = height
+    if h <= 0
+        h = 1
+    end
+    let v = clamp_byte(fill)
+    let data = []
+    let n = w * h * ch
+    let i = 0
+    while i < n
+        data.push(v)
+        i += 1
+    end
+    return make_image(w, h, ch, data)
+end
+
+## Converts an RGB/RGBA image to RGB grayscale (luminosity approximation).
+##
+## Uses integer weights `(77*R + 150*G + 29*B) / 256`; alpha is preserved.
+## Returns the input unchanged when it is not valid.
+pub function image_grayscale(img: ClipboardImage) -> ClipboardImage
+    if img.image_valid() == 0
+        return img
+    end
+    let out = []
+    let n = img.width * img.height
+    let i = 0
+    while i < n
+        let base = i * img.channels
+        let r = img.data[base]
+        let g = img.data[base + 1]
+        let b = img.data[base + 2]
+        let gray = (77 * r + 150 * g + 29 * b) / 256
+        out.push(clamp_byte(gray))
+        out.push(clamp_byte(gray))
+        out.push(clamp_byte(gray))
+        if img.channels == 4
+            out.push(img.data[base + 3])
+        end
+        i += 1
+    end
+    return make_image(img.width, img.height, img.channels, out)
+end
+
+## Downscales an image to fit within `max_side` using nearest-neighbor sampling.
+##
+## Returns the input unchanged when already small or invalid.
+pub function image_thumbnail(img: ClipboardImage, max_side: int = 32) -> ClipboardImage
+    if img.image_valid() == 0
+        return img
+    end
+    let cap = max_side
+    if cap <= 0
+        cap = 32
+    end
+    let big = img.width
+    if img.height > big
+        big = img.height
+    end
+    if big <= cap
+        return img
+    end
+    let nw = (img.width * cap) / big
+    let nh = (img.height * cap) / big
+    if nw <= 0
+        nw = 1
+    end
+    if nh <= 0
+        nh = 1
+    end
+    let out = []
+    let y = 0
+    while y < nh
+        let sy = (y * img.height) / nh
+        let x = 0
+        while x < nw
+            let sx = (x * img.width) / nw
+            let base = (sy * img.width + sx) * img.channels
+            let c = 0
+            while c < img.channels
+                out.push(img.data[base + c])
+                c += 1
+            end
+            x += 1
+        end
+        y += 1
+    end
+    return make_image(nw, nh, img.channels, out)
+end
+
+## Returns one-line image info (`"WxH MODE, N bytes, valid/invalid"`).
+pub function image_info(img: ClipboardImage) -> string
+    return img.image_describe()
+end
+
+## Returns 1 when an untyped value holds a consistent image payload.
+##
+## Field-based check for values of unknown static type (map lookups,
+## untyped returns): struct methods cannot dispatch on `any`, so this
+## helper reads fields directly instead of calling `is_valid()`.
+pub function image_value_valid(v) -> int
+    if v is null
+        return 0
+    end
+    let img: ClipboardImage = v
+    if img.width <= 0 or img.height <= 0
+        return 0
+    end
+    if img.channels != 3 and img.channels != 4
+        return 0
+    end
+    if len(img.data) != img.width * img.height * img.channels
+        return 0
+    end
+    return 1
+end
+
+# ───────────────────────────────────────────────────────────────
+# Audio Helpers
+# ───────────────────────────────────────────────────────────────
+
+## Creates silence (`duration_ms` of zero samples at the given format).
+pub function silent_audio(duration_ms: int = 100, sample_rate: int = 8000, channels: int = 1, bits: int = 8) -> ClipboardAudio
+    let rate = sample_rate
+    if rate <= 0
+        rate = 8000
+    end
+    let ch = channels
+    if ch <= 0
+        ch = 1
+    end
+    let depth = bits
+    if depth != 16
+        depth = 8
+    end
+    let ms = duration_ms
+    if ms < 0
+        ms = 0
+    end
+    let frames = (ms * rate) / 1000
+    let bytes_per_frame = ch
+    if depth == 16
+        bytes_per_frame = ch * 2
+    end
+    let data = []
+    let i = 0
+    while i < frames * bytes_per_frame
+        if depth == 16 and i % 2 == 0
+            data.push(0)
+            data.push(0)
+            i += 2
+        else
+            data.push(128)
+            i += 1
+        end
+    end
+    return make_audio(rate, ch, depth, data)
+end
+
+## Synthesizes a square-wave beep (integer arithmetic, no float dependency).
+##
+## `freq_hz` toggles the waveform; `amp` (`0-127`) offsets around the
+## 8-bit center (`128`) or the 16-bit zero point.
+pub function beep_audio(freq_hz: int = 440, duration_ms: int = 100, sample_rate: int = 8000, amp: int = 60) -> ClipboardAudio
+    let rate = sample_rate
+    if rate <= 0
+        rate = 8000
+    end
+    let freq = freq_hz
+    if freq <= 0
+        freq = 440
+    end
+    let ms = duration_ms
+    if ms < 0
+        ms = 0
+    end
+    let a = clamp_byte(amp)
+    if a > 127
+        a = 127
+    end
+    let frames = (ms * rate) / 1000
+    let half_period = rate / (freq * 2)
+    if half_period <= 0
+        half_period = 1
+    end
+    let data = []
+    let i = 0
+    while i < frames
+        let phase = (i / half_period) % 2
+        let sample = 128 + a
+        if phase == 1
+            sample = 128 - a
+        end
+        data.push(clamp_byte(sample))
+        i += 1
+    end
+    return make_audio(rate, 1, 8, data)
+end
+
+# ───────────────────────────────────────────────────────────────
+# File-List Helpers
+# ───────────────────────────────────────────────────────────────
+
+## Normalizes a file list: drops null/blank entries, keeps first-seen order.
+pub function files_normalize(paths) -> array
+    let out = []
+    if paths is null
+        return out
+    end
+    for p in paths
+        if p is null
+            continue
+        end
+        let s = "" + p
+        if is_blank_text(s) == 1
+            continue
+        end
+        let seen = 0
+        for q in out
+            if q == s
+                seen = 1
+            end
+        end
+        if seen == 0
+            out.push(s)
+        end
+    end
+    return out
+end
+
+## Returns 1 when the list holds at least one non-blank path, 0 otherwise.
+pub function files_list_valid(paths) -> int
+    if files_normalize(paths) is null
+        return 0
+    end
+    if len(files_normalize(paths)) > 0
+        return 1
+    end
+    return 0
+end
+
+## Returns 1 when an untyped value holds a consistent audio payload.
+##
+## Field-based check for values of unknown static type (map lookups,
+## untyped returns): struct methods cannot dispatch on `any`, so this
+## helper reads fields directly instead of calling `is_valid()`.
+pub function audio_value_valid(v) -> int
+    if v is null
+        return 0
+    end
+    let aud: ClipboardAudio = v
+    if aud.sample_rate <= 0 or aud.channels <= 0
+        return 0
+    end
+    if aud.channels > 8
+        return 0
+    end
+    if aud.bits != 8 and aud.bits != 16
+        return 0
+    end
+    if aud.bits == 16 and len(aud.data) % 2 != 0
+        return 0
+    end
+    return 1
+end
+
+## Returns sample frame count for an audio value of unknown static type.
+pub function audio_frame_count(v) -> int
+    if v is null
+        return 0
+    end
+    let aud: ClipboardAudio = v
+    let bytes_per_sample = 1
+    if aud.bits == 16
+        bytes_per_sample = 2
+    end
+    let stride = bytes_per_sample * aud.channels
+    if stride <= 0
+        return 0
+    end
+    return len(aud.data) / stride
+end
+
+## Returns duration in milliseconds for an audio value of unknown static type.
+pub function audio_duration_of(v) -> int
+    if audio_value_valid(v) == 0
+        return 0
+    end
+    let aud: ClipboardAudio = v
+    return audio_frame_count(aud) * 1000 / aud.sample_rate
+end

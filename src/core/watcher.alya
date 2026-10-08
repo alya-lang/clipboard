@@ -1,0 +1,67 @@
+## clipboard Change Watcher
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Cooperative polling watcher over the monotonic sequence number: register
+## a `fn(entry)` hook, poll for changes, and observe the latest entry without
+## blocking the caller.
+
+import "../types.alya"
+import "./history.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Public Watcher Functions
+# ───────────────────────────────────────────────────────────────
+
+## Registers a change hook invoked with the latest entry on every poll hit.
+##
+## Pass null to unregister. Resets the observed marker to the current
+## sequence so only future writes fire the hook.
+pub function watcher_on_change(cb: Clipboard, hook)
+    cb.watch_hook = hook
+    cb.watch_seq = cb.seq
+end
+
+## Stops change notifications and clears the registered hook.
+pub function watcher_stop(cb: Clipboard)
+    cb.watch_hook = null
+    cb.watch_seq = cb.seq
+end
+
+## Returns 1 when writes happened since the last poll, 0 otherwise.
+##
+## Never fires the hook and never advances the observed marker.
+pub function watcher_changed(cb: Clipboard) -> int
+    if cb.seq != cb.watch_seq
+        return 1
+    end
+    return 0
+end
+
+## Polls once: fires the hook with the latest entry when changed.
+##
+## Returns 1 when a change was observed (marker advanced), 0 otherwise.
+## Without a registered hook the marker still advances and 1 is returned.
+pub function watcher_poll(cb: Clipboard) -> int
+    if cb.seq == cb.watch_seq
+        return 0
+    end
+    cb.watch_seq = cb.seq
+    if cb.watch_hook is not null
+        let hook = cb.watch_hook
+        hook(hist_last(cb))
+    end
+    return 1
+end
+
+## Returns the entry the watcher last observed, or null when none yet.
+pub function watcher_last_seen(cb: Clipboard)
+    if len(cb.history) == 0
+        return null
+    end
+    for e in cb.history
+        if e.seq == cb.watch_seq
+            return e
+        end
+    end
+    return null
+end

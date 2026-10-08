@@ -3,4 +3,11 @@
 
 extern "C" from "clipboard"
     function alya_clipboard_add(a: i32, b: i32) -> i32
+    function clipboard_text_limit() -> i32
+    function clipboard_native_available() -> i32
+    function clipboard_native_seq() -> i32
+    function clipboard_sys_has_text() -> i32
+    function clipboard_sys_get_text() -> str
+    function clipboard_sys_set_text(text: str) -> i32
+    function clipboard_sys_clear() -> i32
 end

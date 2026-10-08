@@ -1,0 +1,456 @@
+## clipboard Core State Engine
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Instance-based in-memory clipboard: per-format copy/paste/has/clear,
+## sequence tracking, metadata, and history retention. Payloads live in the
+## `store` map; `ClipboardEntry` metadata lives in the parallel `meta` map.
+
+import "../types.alya"
+import "./codec.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Private Helpers
+# ───────────────────────────────────────────────────────────────
+
+# MIME label for a well-known format name.
+function mime_for(format_name: string) -> string
+    return when format_name
+        is "text" => "text/plain"
+        is "html" => "text/html"
+        is "image" => "image/rgba"
+        is "audio" => "audio/pcm"
+        is "files" => "text/uri-list"
+        else => "application/octet-stream"
+    end
+end
+
+# Format enum value for a well-known format name.
+function format_code_for(format_name: string) -> int
+    return when format_name
+        is "text" => ClipboardFormat.Text
+        is "html" => ClipboardFormat.Html
+        is "image" => ClipboardFormat.Image
+        is "audio" => ClipboardFormat.Audio
+        is "files" => ClipboardFormat.Files
+        else => ClipboardFormat.Custom
+    end
+end
+
+# Tracks a format name in insertion order (moves re-written names to back).
+function track_format(cb: Clipboard, format_name: string)
+    let kept = []
+    for f in cb.formats
+        if f != format_name
+            kept.push(f)
+        end
+    end
+    kept.push(format_name)
+    cb.formats = kept
+end
+
+# Appends a history record, enforcing the retention cap oldest-first.
+function push_history(cb: Clipboard, format_name: string, size: int, preview: string)
+    let entry = make_entry(format_code_for(format_name), mime_for(format_name), cb.seq, clock_ms(), size, preview)
+    cb.meta[format_name] = entry
+    cb.history.push(entry)
+    if cb.max_history > 0
+        while len(cb.history) > cb.max_history
+            let kept = []
+            let i = 1
+            while i < len(cb.history)
+                kept.push(cb.history[i])
+                i += 1
+            end
+            cb.history = kept
+        end
+    end
+    return entry
+end
+
+# Shared write path: stores payload, bumps seq, tracks format + history.
+function commit_write(cb: Clipboard, format_name: string, payload, size: int, preview: string) -> int
+    cb.store[format_name] = payload
+    cb.seq += 1
+    cb.writes += 1
+    cb.updated_at = clock_ms()
+    track_format(cb, format_name)
+    push_history(cb, format_name, size, preview)
+    return 1
+end
+
+# Removes one format from store, meta, and order. Returns 1 when removed.
+function drop_format(cb: Clipboard, format_name: string) -> int
+    let existed = 0
+    if format_name in cb.store
+        cb.store.remove(format_name)
+        existed = 1
+    end
+    if format_name in cb.meta
+        cb.meta.remove(format_name)
+    end
+    let kept = []
+    for f in cb.formats
+        if f != format_name
+            kept.push(f)
+        end
+    end
+    cb.formats = kept
+    return existed
+end
+
+# Drops the files marker and every indexed file slot from the store,
+# returning the number of removed slots. Format tracking and metadata
+# stay untouched: callers re-track via `commit_write` (copy path) or drop
+# the group explicitly (clear path).
+function drop_files_slots(cb: Clipboard) -> int
+    let n = 0
+    if "files" in cb.store
+        cb.store.remove("files")
+        n += 1
+    end
+    let i = 0
+    while true
+        let slot = "files:" + str(i)
+        if slot in cb.store
+            cb.store.remove(slot)
+            n += 1
+            i += 1
+        else
+            break
+        end
+    end
+    return n
+end
+
+# ───────────────────────────────────────────────────────────────
+# Public Core Functions
+# ───────────────────────────────────────────────────────────────
+
+## Stores text, replacing any previous text payload. Returns 1.
+pub function store_copy_text(cb: Clipboard, text) -> int
+    let s = ""
+    if text is not null
+        s = "" + text
+    end
+    return commit_write(cb, "text", normalize_text(s), len(s), text_preview(s))
+end
+
+## Returns the stored text, or null when no text is present.
+pub function store_paste_text(cb: Clipboard)
+    if "text" in cb.store
+        cb.reads += 1
+        return cb.store["text"]
+    end
+    return null
+end
+
+## Returns 1 when a non-blank text payload is present, 0 otherwise.
+pub function store_has_text(cb: Clipboard) -> int
+    if "text" in cb.store
+        if is_blank_text(cb.store["text"]) == 0
+            return 1
+        end
+    end
+    return 0
+end
+
+## Stores HTML markup with an optional plain-text alternative. Returns 1.
+##
+## Both parts travel as plain strings (`"html"` + internal `"html_text"`;
+## only `"html"` is tracked in formats). `plain` defaults to tag-stripped
+## markup when blank.
+pub function store_copy_html(cb: Clipboard, html, plain = null) -> int
+    let markup = ""
+    if html is not null
+        markup = "" + html
+    end
+    let alt = html_to_text(markup, plain)
+    let prev = text_preview(alt)
+    cb.store["html_text"] = alt
+    return commit_write(cb, "html", markup, len(markup), prev)
+end
+
+## Returns the stored HTML payload map (`html`/`plain`), or null when absent.
+##
+## The map is rebuilt fresh from the string slots on every call.
+pub function store_paste_html(cb: Clipboard)
+    if "html" in cb.store
+        cb.reads += 1
+        let markup = cb.store["html"]
+        let alt = ""
+        if "html_text" in cb.store
+            alt = cb.store["html_text"]
+        end
+        return { "html": markup, "plain": alt }
+    end
+    return null
+end
+
+## Returns the plain-text alternative of the stored HTML, or null when absent.
+pub function store_paste_html_text(cb: Clipboard)
+    let payload = store_paste_html(cb)
+    if payload is null
+        return null
+    end
+    return payload["plain"]
+end
+
+## Returns 1 when an HTML payload is present, 0 otherwise.
+pub function store_has_html(cb: Clipboard) -> int
+    if "html" in cb.store
+        return 1
+    end
+    return 0
+end
+
+## Stores an image payload. Returns 1 on success, 0 when invalid.
+pub function store_copy_image(cb: Clipboard, img: ClipboardImage) -> int
+    if img.image_valid() == 0
+        return 0
+    end
+    return commit_write(cb, "image", img, len(img.data), img.image_summary())
+end
+
+## Returns the stored `ClipboardImage`, or null when absent.
+pub function store_paste_image(cb: Clipboard)
+    if "image" in cb.store
+        cb.reads += 1
+        let img: ClipboardImage = cb.store["image"]
+        return img
+    end
+    return null
+end
+
+## Returns 1 when a valid image payload is present, 0 otherwise.
+pub function store_has_image(cb: Clipboard) -> int
+    if "image" in cb.store
+        return image_value_valid(cb.store["image"])
+    end
+    return 0
+end
+
+## Stores an audio payload. Returns 1 on success, 0 when invalid.
+pub function store_copy_audio(cb: Clipboard, aud: ClipboardAudio) -> int
+    if aud.audio_valid() == 0
+        return 0
+    end
+    return commit_write(cb, "audio", aud, len(aud.data), aud.audio_summary())
+end
+
+## Returns the stored `ClipboardAudio`, or null when absent.
+pub function store_paste_audio(cb: Clipboard)
+    if "audio" in cb.store
+        cb.reads += 1
+        let aud: ClipboardAudio = cb.store["audio"]
+        return aud
+    end
+    return null
+end
+
+## Returns 1 when a valid audio payload is present, 0 otherwise.
+pub function store_has_audio(cb: Clipboard) -> int
+    if "audio" in cb.store
+        return audio_value_valid(cb.store["audio"])
+    end
+    return 0
+end
+
+## Stores a file path list. Returns 1 on success, 0 when the list is empty.
+##
+## Paths travel as plain strings under indexed `"files:N"` slots plus a
+## `"files"` marker (only `"files"` is tracked in formats). Previous
+## indexed slots are dropped first so shorter rewrites leave no stale
+## entries behind.
+pub function store_copy_files(cb: Clipboard, paths) -> int
+    let clean = files_normalize(paths)
+    if len(clean) == 0
+        return 0
+    end
+    drop_files_slots(cb)
+    let i = 0
+    for p in clean
+        cb.store["files:" + str(i)] = p
+        i += 1
+    end
+    return commit_write(cb, "files", "", len(clean), text_preview(clean[0]))
+end
+
+## Returns the stored file path array, or null when absent.
+pub function store_paste_files(cb: Clipboard)
+    if "files" in cb.store
+        cb.reads += 1
+        let out = []
+        let i = 0
+        while true
+            let slot = "files:" + str(i)
+            if slot in cb.store
+                out.push(cb.store[slot])
+                i += 1
+            else
+                break
+            end
+        end
+        return out
+    end
+    return null
+end
+
+## Returns 1 when a non-empty file list is present, 0 otherwise.
+pub function store_has_files(cb: Clipboard) -> int
+    if "files" in cb.store
+        if "files:0" in cb.store
+            return 1
+        end
+    end
+    return 0
+end
+
+## Stores an application-defined payload under `custom:<name>`. Returns 1.
+##
+## Empty names are rejected with 0; values travel through the `store` map.
+## NOTE: map values nest unreliably on some builds — prefer scalars,
+## arrays, and structs for custom payloads.
+pub function store_set_custom(cb: Clipboard, name, value, mime: string = "application/octet-stream") -> int
+    if name is null
+        return 0
+    end
+    let key = "" + name
+    if is_blank_text(key) == 1
+        return 0
+    end
+    let slot = "custom:" + key
+    let label = "" + mime
+    if is_blank_text(label) == 1
+        label = "application/octet-stream"
+    end
+    cb.store[slot] = value
+    cb.seq += 1
+    cb.writes += 1
+    cb.updated_at = clock_ms()
+    track_format(cb, slot)
+    let entry = make_entry(ClipboardFormat.Custom, label, cb.seq, clock_ms(), 1, text_preview(key))
+    cb.meta[slot] = entry
+    cb.history.push(entry)
+    if cb.max_history > 0
+        while len(cb.history) > cb.max_history
+            let kept = []
+            let i = 1
+            while i < len(cb.history)
+                kept.push(cb.history[i])
+                i += 1
+            end
+            cb.history = kept
+        end
+    end
+    return 1
+end
+
+## Returns a custom payload by name, or null when absent.
+pub function store_get_custom(cb: Clipboard, name)
+    if name is null
+        return null
+    end
+    let slot = "custom:" + ("" + name)
+    if slot in cb.store
+        cb.reads += 1
+        return cb.store[slot]
+    end
+    return null
+end
+
+## Returns 1 when the named custom payload exists, 0 otherwise.
+pub function store_has_custom(cb: Clipboard, name) -> int
+    if name is null
+        return 0
+    end
+    let slot = "custom:" + ("" + name)
+    if slot in cb.store
+        return 1
+    end
+    return 0
+end
+
+## Clears one format slot (or custom name). Returns 1 when removed.
+##
+## Group slots clear together: `"html"` also drops `"html_text"`, and
+## `"files"` also drops the marker plus every indexed `"files:N"` slot.
+pub function store_clear_format(cb: Clipboard, format_name) -> int
+    if format_name is null
+        return 0
+    end
+    let slot = "" + format_name
+    if slot == "html" and "html_text" in cb.store
+        cb.store.remove("html_text")
+    end
+    let removed = 0
+    if slot == "files"
+        if drop_files_slots(cb) > 0
+            removed = 1
+        end
+    end
+    if drop_format(cb, slot) == 1
+        removed = 1
+    end
+    if removed == 1
+        cb.seq += 1
+        cb.clears += 1
+        cb.updated_at = clock_ms()
+    end
+    return removed
+end
+
+## Clears every format slot. Returns the number of removed formats.
+pub function store_clear_all(cb: Clipboard) -> int
+    let count = len(cb.formats)
+    cb.store = map()
+    cb.meta = map()
+    cb.formats = []
+    if count > 0
+        cb.seq += 1
+        cb.clears += 1
+        cb.updated_at = clock_ms()
+    end
+    return count
+end
+
+## Returns an independent copy of the present format-name list.
+pub function store_formats(cb: Clipboard) -> array
+    return cb.formats[..]
+end
+
+## Returns 1 when the named format slot is present, 0 otherwise.
+pub function store_has(cb: Clipboard, format_name) -> int
+    if format_name is null
+        return 0
+    end
+    let slot = "" + format_name
+    if slot in cb.store
+        return 1
+    end
+    return 0
+end
+
+## Returns 1 when no payload is stored, 0 otherwise.
+pub function store_is_empty(cb: Clipboard) -> int
+    if len(cb.formats) == 0
+        return 1
+    end
+    return 0
+end
+
+## Returns the metadata entry for a format slot, or null when absent.
+pub function store_meta(cb: Clipboard, format_name)
+    if format_name is null
+        return null
+    end
+    let slot = "" + format_name
+    if slot in cb.meta
+        return cb.meta[slot]
+    end
+    return null
+end
+
+## Builds a `ClipboardStats` snapshot of the current container.
+pub function store_stats(cb: Clipboard) -> ClipboardStats
+    return make_stats(cb.writes, cb.reads, cb.clears, cb.seq, len(cb.formats), len(cb.history), cb.backend)
+end

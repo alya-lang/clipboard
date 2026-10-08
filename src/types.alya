@@ -1,434 +1,419 @@
 ## clipboard Types & Data Structures
 ##
 ## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
-## Defines configuration models, enumerations, structural interfaces, and associated methods
-## showcasing the full range of modern Alya type system capabilities.
-
-# ───────────────────────────────────────────────────────────────
-# Structural Interfaces (Duck Typing)
-# ───────────────────────────────────────────────────────────────
-
-## Public interface for objects capable of producing a formatted string summary.
-##
-## Any struct implementing a `summary(self) -> string` method implicitly
-## satisfies this interface via Alya's structural duck-typing runtime.
-pub interface Summarizable
-    function summary(self) -> string
-end
-
-## Public interface for objects that provide detailed status descriptions and validation.
-##
-## Structs implementing `describe(self) -> string` and `is_valid(self) -> int`
-## satisfy this contract without explicit inheritance declarations.
-pub interface Describable
-    function describe(self) -> string
-    function is_valid(self) -> int
-end
+## Defines clipboard formats, image/audio payloads, history entries, the
+## stateful Clipboard container, and statistics for text, HTML, image,
+## audio, file-list, and custom-format clipboard workflows.
 
 # ───────────────────────────────────────────────────────────────
 # Enumerations
 # ───────────────────────────────────────────────────────────────
 
-## Public enumeration of entity lifecycle status states.
+## Clipboard payload formats supported by the in-memory backend.
 ##
-## Defines sequential status codes from pending to completed or error states.
-pub enum ClipboardStatus
-    Pending = 0,
-    Active = 1,
-    Archived = 2,
-    Error = 3
+## - `Text` raw unicode text (`"text"`).
+## - `Html` rich-text markup with an optional plain-text fallback (`"html"`).
+## - `Image` raw RGB/RGBA pixel bytes with dimensions (`"image"`).
+## - `Audio` raw PCM sample bytes with format metadata (`"audio"`).
+## - `Files` list of file paths (`"files"`).
+## - `Custom` application-defined payload under a custom name (`"custom:<name>"`).
+pub enum ClipboardFormat
+    Text = 0,
+    Html = 1,
+    Image = 2,
+    Audio = 3,
+    Files = 4,
+    Custom = 5
 end
 
-## Public enumeration of operational priority levels.
+## Backend selection for clipboard synchronization.
 ##
-## Used to determine dispatch scheduling, queue ordering, and urgency tiers.
-pub enum ClipboardPriority
-    Low = 0,
-    Normal = 1,
-    High = 2,
-    Critical = 3
-end
-
-## Public enumeration of greeting and presentation styles.
-##
-## Governs formatting salutations, prefixes, and stylistic tone.
-pub enum ClipboardStyle
-    Standard = 0,
-    Formal = 1,
-    Casual = 2
+## - `Memory` in-memory backend only (deterministic, always available).
+## - `Native` OS clipboard only (best-effort, headless-safe no-op when absent).
+## - `Auto` mirror to the OS clipboard when available, always keep memory copy.
+pub enum ClipboardBackend
+    Memory = 0,
+    Native = 1,
+    Auto = 2
 end
 
 # ───────────────────────────────────────────────────────────────
 # Data Models (Structs)
 # ───────────────────────────────────────────────────────────────
 
-## Configuration data model holding execution parameters and metadata.
-##
-## Encapsulates target identity, counter thresholds, priority tier, stylistic
-## mode, active status flag, and associated classification tags.
+## Raw image payload with explicit dimensions and channel count.
 ##
 ## ### Fields
-## - `name`: Validated entity identifier string.
-## - `count`: Repetition limit or processing counter.
-## - `priority`: Operational priority level (`ClipboardPriority` enum value).
-## - `style`: Presentation style variant (`ClipboardStyle` enum value).
-## - `enabled`: Activation flag (1 for active, 0 for inactive).
-## - `tags`: Categorical metadata tags array.
+## - `width`: Image width in pixels (`> 0` when valid).
+## - `height`: Image height in pixels (`> 0` when valid).
+## - `channels`: Samples per pixel (`3` = RGB, `4` = RGBA).
+## - `data`: Flat row-major byte array (`width * height * channels` items, `0-255`).
+pub struct ClipboardImage
+    width: int,
+    height: int,
+    channels: int,
+    data: array
+end
+
+## Raw PCM audio payload with explicit format metadata.
+##
+## ### Fields
+## - `sample_rate`: Samples per second per channel (e.g. `8000`, `44100`).
+## - `channels`: Channel count (`1` = mono, `2` = stereo).
+## - `bits`: Bits per sample (`8` or `16`, stored as one or two bytes).
+## - `data`: Flat little-endian sample byte array.
+pub struct ClipboardAudio
+    sample_rate: int,
+    channels: int,
+    bits: int,
+    data: array
+end
+
+## Point-in-time record of a single clipboard write.
+##
+## ### Fields
+## - `format`: `ClipboardFormat` variant integer.
+## - `mime`: MIME label for the payload (e.g. `"text/plain"`, `"image/rgba"`).
+## - `seq`: Monotonic clipboard sequence number at write time.
+## - `created_at`: Millisecond epoch (`clock_ms()` base) of the write.
+## - `size`: Payload size in bytes/items (format-dependent).
+## - `preview`: Short human-readable preview (truncated, never raw binary).
+pub struct ClipboardEntry
+    format: int,
+    mime: string,
+    seq: int,
+    created_at: int,
+    size: int,
+    preview: string
+end
+
+## Construction options for a Clipboard instance.
+##
+## ### Fields
+## - `backend`: Backend selector string (`"memory"`, `"native"`, `"auto"`).
+## - `max_history`: Maximum retained history entries (`<= 0` means unbounded).
+## - `native_fallback`: Mirror writes to the OS clipboard when `1` and available.
 pub struct ClipboardConfig
-    name: string,
-    count: int,
-    priority: int,
-    style: int,
-    enabled: int,
-    tags: array
+    backend: string,
+    max_history: int,
+    native_fallback: int
 end
 
-## Container representing the outcome of an operation.
+## Stateful clipboard container with payloads, history, and watcher state.
 ##
-## Holds an optional payload value, numeric status code, informational message,
-## and accumulated error diagnostic messages.
+## NOTE: User payloads live directly in the `store` map (maps handle mixed
+## `any` values correctly); only typed metadata lives in struct fields and
+## the parallel `meta` map of `ClipboardEntry` records.
 ##
 ## ### Fields
-## - `value`: Result payload (any type, or null on failure).
-## - `status`: Outcome code (0 for success, non-zero for errors).
-## - `message`: Human-readable summary or error explanation.
-## - `errors`: Diagnostic error messages array.
-pub struct ClipboardResult
-    value,
-    status: int,
-    message: string,
-    errors: array
+## - `store`: Internal format name -> payload map (text/html/image/audio/files/custom).
+## - `meta`: Internal format name -> `ClipboardEntry` metadata map.
+## - `formats`: Ordered list of present format names (front = oldest write).
+## - `seq`: Monotonic sequence bumped on every mutation.
+## - `writes`: Lifetime successful write operations.
+## - `reads`: Lifetime successful read operations.
+## - `clears`: Lifetime clear operations.
+## - `updated_at`: Millisecond epoch of the last mutation.
+## - `backend`: Active backend selector string.
+## - `max_history`: Maximum retained history entries (`<= 0` unbounded).
+## - `history`: Array of `ClipboardEntry` records (oldest first).
+## - `watch_seq`: Sequence number observed by the last watcher poll.
+## - `watch_hook`: Change callback `fn(entry)` or null.
+pub struct Clipboard
+    store: map,
+    meta: map,
+    formats: array,
+    seq: int,
+    writes: int,
+    reads: int,
+    clears: int,
+    updated_at: int,
+    backend: string,
+    max_history: int,
+    history: array,
+    watch_seq: int,
+    watch_hook
 end
 
-## Aggregated run statistics tracking test, processing, or batch metrics.
-##
-## Records total observed items, successes, failures, and skipped items.
+## Point-in-time snapshot of clipboard utilization.
 ##
 ## ### Fields
-## - `total`: Total processed items count.
-## - `passed`: Succeeded items count.
-## - `failed`: Failed items count.
-## - `skipped`: Skipped items count.
+## - `writes`: Lifetime successful writes.
+## - `reads`: Lifetime successful reads.
+## - `clears`: Lifetime clear operations.
+## - `seq`: Current monotonic sequence number.
+## - `formats`: Number of formats currently present.
+## - `history_len`: Number of retained history entries.
+## - `backend`: Active backend selector string.
 pub struct ClipboardStats
-    total: int,
-    passed: int,
-    failed: int,
-    skipped: int
+    writes: int,
+    reads: int,
+    clears: int,
+    seq: int,
+    formats: int,
+    history_len: int,
+    backend: string
 end
 
 # ───────────────────────────────────────────────────────────────
-# Private Helper Functions
+# Private Helpers
 # ───────────────────────────────────────────────────────────────
 
-# Internal sanitizer ensuring a non-empty, non-null string fallback.
-function sanitize_text_internal(text, fallback: string) -> string
-    return when
-        text is null => fallback
-        text == ""   => fallback
-        else         => text
+# Canonicalizes a backend selector string to memory/native/auto.
+function backend_key_internal(backend) -> string
+    if backend is null
+        return "memory"
     end
-end
-
-# Formats integer division as a percentage string, clamping denominator zero.
-function format_percent_internal(passed: int, total: int) -> string
-    if total <= 0
-        return "0%"
+    let key = "" + backend
+    if key == "native" or key == "auto" or key == "memory"
+        return key
     end
-    let pct = (passed * 100) / total
-    return "{pct}%"
+    return "memory"
 end
 
 # ───────────────────────────────────────────────────────────────
-# Public Sanitization and Factory Constructors
+# Factory Constructors
 # ───────────────────────────────────────────────────────────────
 
-## Validates and sanitizes a candidate name string.
-##
-## Replaces null or empty strings with the default `"World"` fallback.
+## Creates clipboard construction options with explicit settings.
 ##
 ## ### Parameters
-## - `name`: The candidate name value to sanitize.
+## - `backend`: Backend selector (`"memory"`, `"native"`, `"auto"`). Defaults to `"memory"`.
+## - `max_history`: Retained history cap (`<= 0` unbounded). Defaults to `32`.
+## - `native_fallback`: Mirror to OS clipboard when `1`. Defaults to `1`.
 ##
 ## ### Returns
-## The validated string value, or `"World"` if empty or null.
-##
-## ### Examples
-## ```alya
-## let clean = sanitize_name(null) # "World"
-## let user = sanitize_name("Alice") # "Alice"
-## ```
-pub function sanitize_name(name) -> string
-    return sanitize_text_internal(name, "World")
-end
-
-## Factory constructor creating a validated `ClipboardConfig` instance.
-##
-## Sanitizes the input name and sets sensible defaults for optional fields.
-##
-## ### Parameters
-## - `name`: Entity identifier name. Defaults to `"World"`.
-## - `count`: Counter or repetition limit. Defaults to `1`.
-## - `priority`: Priority tier. Defaults to `ClipboardPriority.Normal`.
-## - `style`: Presentation style variant. Defaults to `ClipboardStyle.Standard`.
-## - `enabled`: Active flag. Defaults to `1`.
-## - `tags`: Categorization tags array. Defaults to `[]`.
-##
-## ### Returns
-## A fully initialized `ClipboardConfig` instance.
-##
-## ### Examples
-## ```alya
-## let cfg = make_config("Alice", 3, ClipboardPriority.High)
-## ```
-pub function make_config(name = "World", count: int = 1, priority: int = ClipboardPriority.Normal, style: int = ClipboardStyle.Standard, enabled: int = 1, tags: array = []) -> ClipboardConfig
-    let valid_name = sanitize_name(name)
+## Initialized `ClipboardConfig` instance.
+pub function clipboard_config(backend = "memory", max_history: int = 32, native_fallback: int = 1) -> ClipboardConfig
     return ClipboardConfig {
-        name: valid_name,
-        count: count,
-        priority: priority,
-        style: style,
-        enabled: enabled,
-        tags: tags
+        backend: backend_key_internal(backend),
+        max_history: max_history,
+        native_fallback: native_fallback
     }
 end
 
-## Factory constructor creating a successful `ClipboardResult`.
+## Creates an image payload with explicit dimensions and byte data.
 ##
-## ### Parameters
-## - `value`: The success payload to encapsulate.
-## - `message`: Descriptive success message string. Defaults to `"OK"`.
-##
-## ### Returns
-## A `ClipboardResult` with status `0` and empty errors array.
-##
-## ### Examples
-## ```alya
-## let res = ok_result("Processed data", "Success")
-## ```
-pub function ok_result(value, message: string = "OK") -> ClipboardResult
-    return ClipboardResult {
-        value: value,
-        status: 0,
-        message: message,
-        errors: []
+## `data` must hold exactly `width * height * channels` byte items (`0-255`).
+## Use `blank_image` or `gradient_image` (extras) to synthesize valid payloads.
+pub function make_image(width: int, height: int, channels: int = 3, data: array = []) -> ClipboardImage
+    let bytes = data
+    if bytes is null
+        bytes = []
+    end
+    return ClipboardImage {
+        width: width,
+        height: height,
+        channels: channels,
+        data: bytes
     }
 end
 
-## Factory constructor creating a failed `ClipboardResult`.
+## Creates an audio payload with explicit format metadata and sample bytes.
 ##
-## ### Parameters
-## - `message`: Descriptive error message string.
-## - `errors`: Diagnostic error details array. Defaults to `[]`.
-##
-## ### Returns
-## A `ClipboardResult` with status `1` and null value payload.
-##
-## ### Examples
-## ```alya
-## let err = error_result("Validation failed", ["Name is missing"])
-## ```
-pub function error_result(message: string, errors: array = []) -> ClipboardResult
-    return ClipboardResult {
-        value: null,
-        status: 1,
-        message: message,
-        errors: errors
+## For 16-bit audio `data` holds little-endian pairs (`len(data)` must be even).
+pub function make_audio(sample_rate: int = 8000, channels: int = 1, bits: int = 8, data: array = []) -> ClipboardAudio
+    let bytes = data
+    if bytes is null
+        bytes = []
+    end
+    return ClipboardAudio {
+        sample_rate: sample_rate,
+        channels: channels,
+        bits: bits,
+        data: bytes
     }
 end
 
-## Factory constructor creating a `ClipboardStats` metric record.
-##
-## ### Parameters
-## - `total`: Total observed items count.
-## - `passed`: Succeeded items count.
-## - `failed`: Failed items count.
-## - `skipped`: Skipped items count. Defaults to `0`.
-##
-## ### Returns
-## A populated `ClipboardStats` record.
-##
-## ### Examples
-## ```alya
-## let stats = make_stats(100, 95, 5, 0)
-## ```
-pub function make_stats(total: int, passed: int, failed: int, skipped: int = 0) -> ClipboardStats
+## Creates a history entry record for a clipboard write.
+pub function make_entry(format: int = ClipboardFormat.Text, mime: string = "text/plain", seq: int = 0, created_at: int = 0, size: int = 0, preview: string = "") -> ClipboardEntry
+    return ClipboardEntry {
+        format: format,
+        mime: mime,
+        seq: seq,
+        created_at: created_at,
+        size: size,
+        preview: preview
+    }
+end
+
+## Creates an empty clipboard container with explicit settings.
+pub function clipboard_new(backend = "memory", max_history: int = 32) -> Clipboard
+    return Clipboard {
+        store: map(),
+        meta: map(),
+        formats: [],
+        seq: 0,
+        writes: 0,
+        reads: 0,
+        clears: 0,
+        updated_at: clock_ms(),
+        backend: backend_key_internal(backend),
+        max_history: max_history,
+        history: [],
+        watch_seq: 0,
+        watch_hook: null
+    }
+end
+
+## Creates a clipboard container from a `ClipboardConfig` instance.
+pub function clipboard_with_config(cfg: ClipboardConfig) -> Clipboard
+    return clipboard_new(cfg.backend, cfg.max_history)
+end
+
+## Builds a `ClipboardStats` snapshot record.
+pub function make_stats(writes: int, reads: int, clears: int, seq: int, formats: int, history_len: int, backend: string = "memory") -> ClipboardStats
     return ClipboardStats {
-        total: total,
-        passed: passed,
-        failed: failed,
-        skipped: skipped
+        writes: writes,
+        reads: reads,
+        clears: clears,
+        seq: seq,
+        formats: formats,
+        history_len: history_len,
+        backend: backend
     }
 end
 
 # ───────────────────────────────────────────────────────────────
-# Struct Methods: ClipboardConfig
+# Struct Methods: ClipboardImage
 # ───────────────────────────────────────────────────────────────
 
-## Returns a formatted single-line string summary of this configuration.
-##
-## Implicitly satisfies the `Summarizable` interface.
-##
-## ### Parameters
-## - `self`: The target `ClipboardConfig` instance.
-##
-## ### Returns
-## Formatted summary string in the form `"{name} (count: {count}, enabled: {enabled})"`.
-pub function ClipboardConfig.summary(self: ClipboardConfig) -> string
-    let active_str = when self.enabled
-        is true => "active"
-        else => "disabled"
+## Returns 1 when dimensions, channels, and byte length are consistent.
+pub function ClipboardImage.image_valid(self: ClipboardImage) -> int
+    if self.width <= 0 or self.height <= 0
+        return 0
     end
-    return "{self.name} (count: {self.count}, {active_str})"
-end
-
-## Returns a detailed multi-attribute description of this configuration.
-##
-## Implicitly satisfies the `Describable` interface.
-##
-## ### Parameters
-## - `self`: The target `ClipboardConfig` instance.
-##
-## ### Returns
-## Detailed descriptive string including priority and style codes.
-pub function ClipboardConfig.describe(self: ClipboardConfig) -> string
-    return "[Config] name={self.name}, count={self.count}, priority={self.priority}, style={self.style}"
-end
-
-## Validates whether this configuration conforms to essential operational constraints.
-##
-## Implicitly satisfies the `Describable` interface.
-##
-## ### Parameters
-## - `self`: The target `ClipboardConfig` instance.
-##
-## ### Returns
-## `1` if valid (non-empty name and count >= 0), `0` otherwise.
-pub function ClipboardConfig.is_valid(self: ClipboardConfig) -> int
-    if self.name == "" or self.count < 0
-        return false
+    if self.channels != 3 and self.channels != 4
+        return 0
     end
-    return true
+    if len(self.data) != self.width * self.height * self.channels
+        return 0
+    end
+    return 1
 end
 
-## Returns 1 if this configuration is enabled, 0 otherwise.
-##
-## ### Parameters
-## - `self`: The target `ClipboardConfig` instance.
-##
-## ### Returns
-## `1` when enabled, `0` when disabled.
-pub function ClipboardConfig.is_enabled(self: ClipboardConfig) -> int
-    return self.enabled
+## Returns total pixel count (`width * height`).
+pub function ClipboardImage.pixels(self: ClipboardImage) -> int
+    return self.width * self.height
 end
 
-## Returns a new configuration copy with an updated name.
-##
-## ### Parameters
-## - `self`: The current `ClipboardConfig` instance.
-## - `new_name`: The replacement name string.
-##
-## ### Returns
-## A new `ClipboardConfig` instance with updated name.
-pub function ClipboardConfig.with_name(self: ClipboardConfig, new_name) -> ClipboardConfig
-    return ClipboardConfig {
-        name: sanitize_name(new_name),
-        count: self.count,
-        priority: self.priority,
-        style: self.style,
-        enabled: self.enabled,
-        tags: self.tags
-    }
+## Returns expected byte length (`width * height * channels`).
+pub function ClipboardImage.byte_len(self: ClipboardImage) -> int
+    return self.width * self.height * self.channels
 end
 
-## Returns a new configuration copy with an updated priority level.
-##
-## ### Parameters
-## - `self`: The current `ClipboardConfig` instance.
-## - `new_priority`: New priority level from `ClipboardPriority`.
-##
-## ### Returns
-## A new `ClipboardConfig` instance with updated priority.
-pub function ClipboardConfig.with_priority(self: ClipboardConfig, new_priority: int) -> ClipboardConfig
-    return ClipboardConfig {
-        name: self.name,
-        count: self.count,
-        priority: new_priority,
-        style: self.style,
-        enabled: self.enabled,
-        tags: self.tags
-    }
+## Returns one-line summary (`"WxH x channels"`, e.g. `"8x8 RGB"`).
+pub function ClipboardImage.image_summary(self: ClipboardImage) -> string
+    let mode = "RGB"
+    if self.channels == 4
+        mode = "RGBA"
+    end
+    return "{self.width}x{self.height} {mode}"
+end
+
+## Returns detailed description including byte length and validity.
+pub function ClipboardImage.image_describe(self: ClipboardImage) -> string
+    let flag = "invalid"
+    if self.image_valid() == 1
+        flag = "valid"
+    end
+    return "[Image] {self.image_summary()}, bytes={len(self.data)}, {flag}"
 end
 
 # ───────────────────────────────────────────────────────────────
-# Struct Methods: ClipboardResult
+# Struct Methods: ClipboardAudio
 # ───────────────────────────────────────────────────────────────
 
-## Returns 1 if this result represents a successful operation.
-##
-## ### Parameters
-## - `self`: The target `ClipboardResult` instance.
-##
-## ### Returns
-## `1` when status is `0`, `0` otherwise.
-pub function ClipboardResult.is_ok(self: ClipboardResult) -> int
-    if self.status == 0
-        return true
+## Returns 1 when rate, channels, bit depth, and byte length are consistent.
+pub function ClipboardAudio.audio_valid(self: ClipboardAudio) -> int
+    if self.sample_rate <= 0 or self.channels <= 0
+        return 0
     end
-    return false
+    if self.channels > 8
+        return 0
+    end
+    if self.bits != 8 and self.bits != 16
+        return 0
+    end
+    if self.bits == 16 and len(self.data) % 2 != 0
+        return 0
+    end
+    return 1
 end
 
-## Returns 1 if this result represents an error condition.
-##
-## ### Parameters
-## - `self`: The target `ClipboardResult` instance.
-##
-## ### Returns
-## `1` when status is non-zero, `0` when status is `0`.
-pub function ClipboardResult.is_error(self: ClipboardResult) -> int
-    if self.status != 0
-        return true
+## Returns sample frame count (samples per channel).
+pub function ClipboardAudio.frames(self: ClipboardAudio) -> int
+    let bytes_per_sample = 1
+    if self.bits == 16
+        bytes_per_sample = 2
     end
-    return false
+    let stride = bytes_per_sample * self.channels
+    if stride <= 0
+        return 0
+    end
+    return len(self.data) / stride
 end
 
-## Unwraps the result's message string, or returns a fallback string on error.
-##
-## ### Parameters
-## - `self`: The target `ClipboardResult` instance.
-## - `fallback`: Alternative string returned if this result represents an error.
-##
-## ### Returns
-## `message` on success, or `fallback` on error.
-pub function ClipboardResult.unwrap_or(self: ClipboardResult, fallback: string) -> string
-    if self.status == 0
-        return self.message
+## Returns duration in milliseconds (integer division, `0` when invalid).
+pub function ClipboardAudio.duration_ms(self: ClipboardAudio) -> int
+    if self.audio_valid() == 0
+        return 0
     end
-    return fallback
+    return self.frames() * 1000 / self.sample_rate
+end
+
+## Returns one-line summary (e.g. `"8000Hz mono 8-bit, 12 frames"`).
+pub function ClipboardAudio.audio_summary(self: ClipboardAudio) -> string
+    let layout = "mono"
+    if self.channels == 2
+        layout = "stereo"
+    elif self.channels > 2
+        layout = "{self.channels}ch"
+    end
+    return "{self.sample_rate}Hz {layout} {self.bits}-bit, {self.frames()} frames"
+end
+
+## Returns detailed description including duration and validity.
+pub function ClipboardAudio.audio_describe(self: ClipboardAudio) -> string
+    let flag = "invalid"
+    if self.audio_valid() == 1
+        flag = "valid"
+    end
+    return "[Audio] {self.audio_summary()}, duration={self.duration_ms()}ms, {flag}"
+end
+
+# ───────────────────────────────────────────────────────────────
+# Struct Methods: ClipboardEntry
+# ───────────────────────────────────────────────────────────────
+
+## Returns one-line summary (`"[seq N] mime (size)"`).
+pub function ClipboardEntry.entry_summary(self: ClipboardEntry) -> string
+    return "[seq {self.seq}] {self.mime} ({self.size})"
+end
+
+## Returns detailed description including format code and preview.
+pub function ClipboardEntry.entry_describe(self: ClipboardEntry) -> string
+    return "[Entry] format={self.format}, mime={self.mime}, seq={self.seq}, size={self.size}, preview={self.preview}"
+end
+
+## Returns 1 when the entry carries a known format and non-negative size.
+pub function ClipboardEntry.entry_valid(self: ClipboardEntry) -> int
+    if self.size < 0 or self.seq < 0
+        return 0
+    end
+    return 1
 end
 
 # ───────────────────────────────────────────────────────────────
 # Struct Methods: ClipboardStats
 # ───────────────────────────────────────────────────────────────
 
-## Returns the total number of checked items (passed + failed).
-##
-## ### Parameters
-## - `self`: The target `ClipboardStats` instance.
-##
-## ### Returns
-## Integer sum of passed and failed items.
-pub function ClipboardStats.total_checked(self: ClipboardStats) -> int
-    return self.passed + self.failed
+## Returns total read/write operations served.
+pub function ClipboardStats.total_ops(self: ClipboardStats) -> int
+    return self.writes + self.reads
 end
 
-## Computes and returns the success rate percentage as a formatted string.
-##
-## ### Parameters
-## - `self`: The target `ClipboardStats` instance.
-##
-## ### Returns
-## Formatted percentage string (e.g. `"90%"`).
-pub function ClipboardStats.success_rate(self: ClipboardStats) -> string
-    let checked = self.passed + self.failed
-    return format_percent_internal(self.passed, checked)
+## Returns one-line summary of counters, formats, and history depth.
+pub function ClipboardStats.stats_summary(self: ClipboardStats) -> string
+    return "[Clipboard] writes={self.writes}, reads={self.reads}, clears={self.clears}, seq={self.seq}, formats={self.formats}, history={self.history_len}"
 end

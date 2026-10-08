@@ -1,0 +1,98 @@
+## clipboard History Queries
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Read-only views over the retained `ClipboardEntry` log: latest entry,
+## indexed access, per-format search, retention tuning, and clearing.
+
+import "../types.alya"
+
+# ───────────────────────────────────────────────────────────────
+# Public History Functions
+# ───────────────────────────────────────────────────────────────
+
+## Returns the number of retained history entries.
+pub function hist_len(cb: Clipboard) -> int
+    return len(cb.history)
+end
+
+## Returns an independent copy of the history log (oldest first).
+pub function hist_list(cb: Clipboard) -> array
+    return cb.history[..]
+end
+
+## Returns the entry at `index` (negative counts from the end), or null.
+pub function hist_get(cb: Clipboard, index: int)
+    let n = len(cb.history)
+    if n == 0
+        return null
+    end
+    let at = index
+    if at < 0
+        at = n + at
+    end
+    if at < 0 or at >= n
+        return null
+    end
+    return cb.history[at]
+end
+
+## Returns the most recent entry, or null when history is empty.
+pub function hist_last(cb: Clipboard)
+    if len(cb.history) == 0
+        return null
+    end
+    return cb.history[len(cb.history) - 1]
+end
+
+## Returns all entries written for `format` (enum value or slot name).
+pub function hist_by_format(cb: Clipboard, format) -> array
+    let out = []
+    let code = -1
+    if format is null
+        return out
+    end
+    if format == "text" or format == ClipboardFormat.Text
+        code = ClipboardFormat.Text
+    elif format == "html" or format == ClipboardFormat.Html
+        code = ClipboardFormat.Html
+    elif format == "image" or format == ClipboardFormat.Image
+        code = ClipboardFormat.Image
+    elif format == "audio" or format == ClipboardFormat.Audio
+        code = ClipboardFormat.Audio
+    elif format == "files" or format == ClipboardFormat.Files
+        code = ClipboardFormat.Files
+    elif format == "custom" or format == ClipboardFormat.Custom
+        code = ClipboardFormat.Custom
+    end
+    for e in cb.history
+        if code < 0 or e.format == code
+            out.push(e)
+        end
+    end
+    return out
+end
+
+## Updates the retention cap and trims excess entries oldest-first.
+##
+## `cap <= 0` means unbounded (keeps everything).
+pub function hist_set_cap(cb: Clipboard, cap: int)
+    cb.max_history = cap
+    if cap > 0
+        while len(cb.history) > cap
+            let kept = []
+            let i = 1
+            while i < len(cb.history)
+                kept.push(cb.history[i])
+                i += 1
+            end
+            cb.history = kept
+        end
+    end
+end
+
+## Discards the retained history log. Returns the dropped entry count.
+pub function hist_clear(cb: Clipboard) -> int
+    let n = len(cb.history)
+    cb.history = []
+    return n
+end
