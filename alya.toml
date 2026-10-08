@@ -1,0 +1,45 @@
+[package]
+name = "clipboard"
+version = "0.1.0"
+alya-version = "0.0.19"
+entry = "src/lib.alya"
+description = "Cross-platform clipboard toolkit: text, HTML, image, file list, history, watcher and sync for Alya"
+authors = ["Alya Language Contributors <https://github.com/alya-lang>"]
+license = "MIT"
+homepage = "https://github.com/alya-lang/alya"
+repository = "https://github.com/alya-lang/clipboard"
+keywords = ["alya", "alya-lang", "package", "clipboard", "c", "ffi"]
+
+[dependencies]
+# Optional dependencies install only when an active feature names them:
+# extra = { git = "https://github.com/alya-lang/extra", tag = "v0.1.0", optional = true }
+
+# Optional: feature-gated API slices. Members name another feature or an
+# optional dependency; gate the using code with `@cfg(feature = "...")`
+# and provide a `@cfg(not(feature = "..."))` fallback stub (see
+# `src/lib.alya` and `src/core/extras.alya`). `default` is active unless
+# the caller passes `--no-default-features`; select features explicitly
+# via `alya build/run/test/bench/install --features <a,b>`.
+[features]
+default = ["extras"]
+extras = []
+# extra = ["extra"]
+
+[build]
+c-sources = ["c/clipboard.c"]
+c-flags = ["-O2"]
+c-include-dirs = ["c"]
+links = "clipboard"
+
+# [lint]
+# disabled_rules = []
+# exclude = []
+
+# [fmt]
+# exclude = []
+
+# [test]
+# exclude = []
+
+# [bench]
+# exclude = []

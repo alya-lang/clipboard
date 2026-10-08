@@ -1,0 +1,6 @@
+# Native C FFI declarations for clipboard
+# Part of the Alya Language package ecosystem (https://github.com/alya-lang)
+
+extern "C" from "clipboard"
+    function alya_clipboard_add(a: i32, b: i32) -> i32
+end
