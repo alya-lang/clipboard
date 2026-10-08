@@ -204,8 +204,8 @@ pub function Clipboard.clipboard_describe(self: Clipboard) -> string
 end
 
 ## Returns 1 (a constructed clipboard is always usable).
-pub function Clipboard.clipboard_valid(self: Clipboard) -> int
-    return 1
+pub function Clipboard.clipboard_valid(self: Clipboard) -> bool
+    return true
 end
 
 # ───────────────────────────────────────────────────────────────

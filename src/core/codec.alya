@@ -12,11 +12,11 @@ import "../types.alya"
 # ───────────────────────────────────────────────────────────────
 
 # Returns 1 when `ch` is ASCII whitespace, 0 otherwise.
-function is_space_ch(ch) -> int
+function is_space_ch(ch) -> bool
     if ch == " " or ch == "\t" or ch == "\n" or ch == "\r"
-        return 1
+        return true
     end
-    return 0
+    return false
 end
 
 # Clamps `v` into the byte range [0, 255].
@@ -34,22 +34,22 @@ end
 # ───────────────────────────────────────────────────────────────
 
 ## Returns 1 for null, empty, or whitespace-only text, 0 otherwise.
-pub function is_blank_text(text) -> int
+pub function is_blank_text(text) -> bool
     if text is null
-        return 1
+        return true
     end
     let s = "" + text
     if len(s) == 0
-        return 1
+        return true
     end
     let i = 0
     while i < len(s)
-        if is_space_ch(s[i]) == 0
-            return 0
+        if is_space_ch(s[i]) == false
+            return false
         end
         i += 1
     end
-    return 1
+    return true
 end
 
 ## Returns a truncated preview (`max_len` chars + `"..."` when cut).
@@ -164,16 +164,16 @@ end
 ## Pass a stored plain-text alternative as `fallback`; otherwise tags are
 ## stripped from `html`. Returns `""` for null input.
 pub function html_to_text(html, fallback = null) -> string
-    if fallback is not null and is_blank_text(fallback) == 0
+    if fallback is not null and is_blank_text(fallback) == false
         return "" + fallback
     end
     return html_strip(html)
 end
 
 ## Returns 1 when `html` contains a matched `<...>` tag pair, 0 otherwise.
-pub function html_markup_valid(html) -> int
+pub function html_markup_valid(html) -> bool
     if html is null
-        return 0
+        return false
     end
     let s = "" + html
     let open_at = -1
@@ -183,13 +183,13 @@ pub function html_markup_valid(html) -> int
             open_at = i
         elif s[i] == ">" and open_at >= 0
             if i - open_at >= 2
-                return 1
+                return true
             end
             open_at = -1
         end
         i += 1
     end
-    return 0
+    return false
 end
 
 # ───────────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ end
 ## Uses integer weights `(77*R + 150*G + 29*B) / 256`; alpha is preserved.
 ## Returns the input unchanged when it is not valid.
 pub function image_grayscale(img: ClipboardImage) -> ClipboardImage
-    if img.image_valid() == 0
+    if img.image_valid() == false
         return img
     end
     let out = []
@@ -253,7 +253,7 @@ end
 ##
 ## Returns the input unchanged when already small or invalid.
 pub function image_thumbnail(img: ClipboardImage, max_side: int = 32) -> ClipboardImage
-    if img.image_valid() == 0
+    if img.image_valid() == false
         return img
     end
     let cap = max_side
@@ -305,21 +305,21 @@ end
 ## Field-based check for values of unknown static type (map lookups,
 ## untyped returns): struct methods cannot dispatch on `any`, so this
 ## helper reads fields directly instead of calling `is_valid()`.
-pub function image_value_valid(v) -> int
+pub function image_value_valid(v) -> bool
     if v is null
-        return 0
+        return false
     end
     let img: ClipboardImage = v
     if img.width <= 0 or img.height <= 0
-        return 0
+        return false
     end
     if img.channels != 3 and img.channels != 4
-        return 0
+        return false
     end
     if len(img.data) != img.width * img.height * img.channels
-        return 0
+        return false
     end
-    return 1
+    return true
 end
 
 # ───────────────────────────────────────────────────────────────
@@ -419,7 +419,7 @@ pub function files_normalize(paths) -> array
             continue
         end
         let s = "" + p
-        if is_blank_text(s) == 1
+        if is_blank_text(s) == true
             continue
         end
         let seen = 0
@@ -436,14 +436,14 @@ pub function files_normalize(paths) -> array
 end
 
 ## Returns 1 when the list holds at least one non-blank path, 0 otherwise.
-pub function files_list_valid(paths) -> int
+pub function files_list_valid(paths) -> bool
     if files_normalize(paths) is null
-        return 0
+        return false
     end
     if len(files_normalize(paths)) > 0
-        return 1
+        return true
     end
-    return 0
+    return false
 end
 
 ## Returns 1 when an untyped value holds a consistent audio payload.
@@ -451,24 +451,24 @@ end
 ## Field-based check for values of unknown static type (map lookups,
 ## untyped returns): struct methods cannot dispatch on `any`, so this
 ## helper reads fields directly instead of calling `is_valid()`.
-pub function audio_value_valid(v) -> int
+pub function audio_value_valid(v) -> bool
     if v is null
-        return 0
+        return false
     end
     let aud: ClipboardAudio = v
     if aud.sample_rate <= 0 or aud.channels <= 0
-        return 0
+        return false
     end
     if aud.channels > 8
-        return 0
+        return false
     end
     if aud.bits != 8 and aud.bits != 16
-        return 0
+        return false
     end
     if aud.bits == 16 and len(aud.data) % 2 != 0
-        return 0
+        return false
     end
-    return 1
+    return true
 end
 
 ## Returns sample frame count for an audio value of unknown static type.
@@ -490,7 +490,7 @@ end
 
 ## Returns duration in milliseconds for an audio value of unknown static type.
 pub function audio_duration_of(v) -> int
-    if audio_value_valid(v) == 0
+    if audio_value_valid(v) == false
         return 0
     end
     let aud: ClipboardAudio = v

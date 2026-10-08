@@ -117,11 +117,11 @@ pub function batch_copy(cb: Clipboard, text = null, html = null, img = null, aud
         store_copy_html(cb, html)
         n += 1
     end
-    if img is not null and image_value_valid(img) == 1
+    if img is not null and image_value_valid(img) == true
         store_copy_image(cb, img)
         n += 1
     end
-    if aud is not null and audio_value_valid(aud) == 1
+    if aud is not null and audio_value_valid(aud) == true
         store_copy_audio(cb, aud)
         n += 1
     end

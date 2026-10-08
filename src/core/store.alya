@@ -215,8 +215,7 @@ end
 pub function store_paste_image(cb: Clipboard)
     if "image" in cb.store
         cb.reads += 1
-        let img: ClipboardImage = cb.store["image"]
-        return img
+        return cb.store["image"]
     end
     return null
 end
@@ -241,8 +240,7 @@ end
 pub function store_paste_audio(cb: Clipboard)
     if "audio" in cb.store
         cb.reads += 1
-        let aud: ClipboardAudio = cb.store["audio"]
-        return aud
+        return cb.store["audio"]
     end
     return null
 end
