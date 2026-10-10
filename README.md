@@ -80,6 +80,23 @@ alya add clipboard --git https://github.com/alya-lang/clipboard --branch main
 alya install
 ```
 
+### Package Features
+
+| Feature | Default | Description |
+|:---|:---:|:---|
+| `native` | ✅ | OS clipboard bridge (system text/HTML/image/file-list read/write). |
+| `extras` | ✅ | Synthesis, batch copy, sync, snapshots and history extras. |
+
+```bash
+# Full build (default)
+alya install
+alya test
+
+# Slim build (in-memory core only)
+alya install --no-default-features
+alya test --no-default-features
+```
+
 ---
 
 ## 🚀 Quick Start
