@@ -308,7 +308,7 @@ pub function ClipboardImage.image_summary(self: ClipboardImage) -> string
     if self.channels == 4
         mode = "RGBA"
     end
-    return "{self.width}x{self.height} {mode}"
+    return f"{self.width}x{self.height} {mode}"
 end
 
 ## Returns detailed description including byte length and validity.
@@ -317,7 +317,7 @@ pub function ClipboardImage.image_describe(self: ClipboardImage) -> string
     if self.image_valid() == 1
         flag = "valid"
     end
-    return "[Image] {self.image_summary()}, bytes={len(self.data)}, {flag}"
+    return f"[Image] {self.image_summary()}, bytes={len(self.data)}, {flag}"
 end
 
 # ───────────────────────────────────────────────────────────────
@@ -368,9 +368,9 @@ pub function ClipboardAudio.audio_summary(self: ClipboardAudio) -> string
     if self.channels == 2
         layout = "stereo"
     elif self.channels > 2
-        layout = "{self.channels}ch"
+        layout = f"{self.channels}ch"
     end
-    return "{self.sample_rate}Hz {layout} {self.bits}-bit, {self.frames()} frames"
+    return f"{self.sample_rate}Hz {layout} {self.bits}-bit, {self.frames()} frames"
 end
 
 ## Returns detailed description including duration and validity.
@@ -379,7 +379,7 @@ pub function ClipboardAudio.audio_describe(self: ClipboardAudio) -> string
     if self.audio_valid() == 1
         flag = "valid"
     end
-    return "[Audio] {self.audio_summary()}, duration={self.duration_ms()}ms, {flag}"
+    return f"[Audio] {self.audio_summary()}, duration={self.duration_ms()}ms, {flag}"
 end
 
 # ───────────────────────────────────────────────────────────────
@@ -388,12 +388,12 @@ end
 
 ## Returns one-line summary (`"[seq N] mime (size)"`).
 pub function ClipboardEntry.entry_summary(self: ClipboardEntry) -> string
-    return "[seq {self.seq}] {self.mime} ({self.size})"
+    return f"[seq {self.seq}] {self.mime} ({self.size})"
 end
 
 ## Returns detailed description including format code and preview.
 pub function ClipboardEntry.entry_describe(self: ClipboardEntry) -> string
-    return "[Entry] format={self.format}, mime={self.mime}, seq={self.seq}, size={self.size}, preview={self.preview}"
+    return f"[Entry] format={self.format}, mime={self.mime}, seq={self.seq}, size={self.size}, preview={self.preview}"
 end
 
 ## Returns 1 when the entry carries a known format and non-negative size.
@@ -415,5 +415,5 @@ end
 
 ## Returns one-line summary of counters, formats, and history depth.
 pub function ClipboardStats.stats_summary(self: ClipboardStats) -> string
-    return "[Clipboard] writes={self.writes}, reads={self.reads}, clears={self.clears}, seq={self.seq}, formats={self.formats}, history={self.history_len}"
+    return f"[Clipboard] writes={self.writes}, reads={self.reads}, clears={self.clears}, seq={self.seq}, formats={self.formats}, history={self.history_len}"
 end

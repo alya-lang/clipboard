@@ -50,7 +50,7 @@ end
 
 ## Formats a clipboard container overview (backend, seq, formats, counters).
 pub function format_clipboard(cb: Clipboard) -> string
-    return "[Clipboard:{cb.backend}] seq={cb.seq}, formats=[{format_formats(cb)}], writes={cb.writes}, reads={cb.reads}, history={len(cb.history)}"
+    return f"[Clipboard:{cb.backend}] seq={cb.seq}, formats=[{format_formats(cb)}], writes={cb.writes}, reads={cb.reads}, history={len(cb.history)}"
 end
 
 ## Formats a file list as indexed lines (`"(no files)"` when empty).
@@ -62,7 +62,7 @@ pub function format_files(paths) -> string
     let out = ""
     let i = 0
     while i < len(clean)
-        out += "[{i}] {clean[i]}\n"
+        out += f"[{i}] {clean[i]}\n"
         i += 1
     end
     return out

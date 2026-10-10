@@ -200,7 +200,7 @@ end
 
 ## Returns a detailed description of this container.
 pub function Clipboard.clipboard_describe(self: Clipboard) -> string
-    return "{self.clipboard_summary()}, updated_at={self.updated_at}"
+    return f"{self.clipboard_summary()}, updated_at={self.updated_at}"
 end
 
 ## Returns true (a constructed clipboard is always usable).
